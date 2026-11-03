@@ -237,6 +237,20 @@ class Service:
             raise ApiError(500, "stored submission does not match the passed hash")
         return build_deliverable(load_spec(d.spec_json.encode()), sub, load_canonical(d.canary_bytes))
 
+    def get_audit_file(self, caller: str, job_id: int, what: str, seq: int | None = None) -> bytes:
+        """After the job is final, the buyer side may download the work file and any
+        submission so it can re-run the evaluation itself instead of trusting it."""
+        j, d = self._job_and_draft(job_id)
+        if caller not in (j["owner_id"], j["buyer_agent"]):
+            raise ApiError(403, "only the job's owner or buyer agent")
+        if j["status"] not in FINAL:
+            raise ApiError(409, "audit files are available once the job is final")
+        if what == "work":
+            return self._file(f"drafts/{d.draft_id}/work.csv", d)
+        if not isinstance(seq, int) or not 1 <= seq <= j["submission_seq"]:
+            raise ApiError(404, "no such submission")
+        return self._file(f"jobs/{job_id}/sub-{seq}.csv", d)
+
     def get_reveal(self, job_id: int) -> bytes:
         """Public once the job is final: the opened canary commitment."""
         j, d = self._job_and_draft(job_id)

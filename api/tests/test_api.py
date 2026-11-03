@@ -173,6 +173,11 @@ def test_full_agent_to_agent_flow(env):
     assert c.get(f"/jobs/{jid}/deliverable", headers=prov).status_code == 403
     assert c.get(f"/jobs/{jid}/deliverable", headers=owner).status_code == 200
 
+    # audit files: buyer side only, only once final
+    assert c.get(f"/jobs/{jid}/audit/work", headers=agent).content == work.content
+    assert sha256_hex(c.get(f"/jobs/{jid}/audit/submissions/2", headers=agent).content) == chain.jobs[jid]["current_output_hash"]
+    assert c.get(f"/jobs/{jid}/audit/work", headers=prov).status_code == 403
+
     # reveal after final; public opening matches the commitment
     assert svc.reveal_finished() == [{"job_id": jid, "revealed_tx": f"reveal-{jid}"}]
     blob = c.get(f"/jobs/{jid}/reveal").content
@@ -263,6 +268,7 @@ def test_only_the_right_party_gets_each_file(env):
     assert c.get(f"/jobs/{jid}/input", headers=agent).status_code == 200
     assert c.get(f"/jobs/{jid}/work").status_code == 401
     assert c.get(f"/jobs/{jid}/reveal").status_code == 409  # secret until final
+    assert c.get(f"/jobs/{jid}/audit/work", headers=agent).status_code == 409  # not final yet
 
 
 def test_upload_must_match_on_chain_hash(env):

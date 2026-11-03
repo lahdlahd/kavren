@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kavren-agents"
+version = "0.1.0"
+description = "KAVREN agents: rule-based buyer, LLM provider, attack scripts"
+requires-python = ">=3.11"
+dependencies = ["kavren-core", "kavren-api", "httpx==0.28.1", "py-near==1.2.22"]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0"]
+
+[project.scripts]
+kavren-buyer = "kavren_agents.buyer:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

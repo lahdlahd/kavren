@@ -100,6 +100,14 @@ def create_app(service: Optional[Service] = None) -> FastAPI:
     def deliverable(job_id: int, who: str = Depends(caller)):
         return csv_(service.get_deliverable(who, job_id))
 
+    @app.get("/jobs/{job_id}/audit/work")
+    def audit_work(job_id: int, who: str = Depends(caller)):
+        return csv_(service.get_audit_file(who, job_id, "work"))
+
+    @app.get("/jobs/{job_id}/audit/submissions/{seq}")
+    def audit_sub(job_id: int, seq: int, who: str = Depends(caller)):
+        return csv_(service.get_audit_file(who, job_id, "submission", seq))
+
     @app.get("/jobs/{job_id}/reveal")
     def reveal(job_id: int):
         return Response(service.get_reveal(job_id), media_type="application/json")

@@ -29,6 +29,10 @@ jobs:
         run: |
           pip install -e 'api[test]'
           cd api && pytest -q
+      - name: agent tests (buyer agent end to end through the real API app)
+        run: |
+          pip install -e 'agents[test]'
+          cd agents && pytest -q
       - name: fixtures rebuild byte-identically
         run: |
           python3 fixtures/build_fixtures.py > /dev/null
