@@ -66,9 +66,9 @@ class AgentChain:
 
     GAS = 100 * 10**12
 
-    def __init__(self, rpc_url: str, contract_id: str, account_id: str, private_key: str):
+    def __init__(self, rpc_url, contract_id: str, account_id: str, private_key: str):
         self.views = NearChain(rpc_url, contract_id)
-        self.rpc_url, self.contract_id = rpc_url, contract_id
+        self.rpc_url, self.contract_id = self.views.rpcs, contract_id
         self.account_id, self.private_key = account_id, private_key
 
     def view(self, method: str, args: dict):

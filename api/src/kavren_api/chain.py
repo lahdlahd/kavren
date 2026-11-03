@@ -20,18 +20,54 @@ class ChainError(RuntimeError):
     pass
 
 
+# Public testnet RPC providers listed in NEAR's docs (docs.near.org/api/rpc/providers).
+# rpc.testnet.near.org is "severely rate limited", so it is the last resort.
+DEFAULT_TESTNET_RPCS = [
+    "https://rpc.testnet.fastnear.com",
+    "https://test.rpc.fastnear.com",
+    "https://near-testnet.drpc.org",
+    "https://rpc.testnet.near.org",
+]
+
+
+def rpc_list(value: str | None) -> list[str]:
+    """NEAR_RPC_URL may hold one URL or a comma-separated list; empty -> defaults."""
+    urls = [u.strip() for u in (value or "").split(",") if u.strip()]
+    return urls or list(DEFAULT_TESTNET_RPCS)
+
+
 class NearChain:
     GAS = 50 * 10**12
 
-    def __init__(self, rpc_url: str, contract_id: str, evaluator_id: str = "", evaluator_key: str = ""):
-        self.rpc_url, self.contract_id = rpc_url, contract_id
+    def __init__(self, rpc_url, contract_id: str, evaluator_id: str = "", evaluator_key: str = "",
+                 sleep=None, http: httpx.Client | None = None):
+        import time as _time
+        self.rpcs = rpc_url if isinstance(rpc_url, list) else rpc_list(rpc_url)
+        self.rpc_url, self.contract_id = self.rpcs[0], contract_id
         self.evaluator_id, self.evaluator_key = evaluator_id, evaluator_key
-        self.http = httpx.Client(timeout=20)
+        self.http = http or httpx.Client(timeout=20)
+        self.sleep = sleep or _time.sleep
+        self._i = 0
+
+    def _post(self, payload: dict) -> dict:
+        """Try each provider in turn with exponential backoff on 429 / 5xx / network errors."""
+        last = None
+        for attempt in range(2 * len(self.rpcs)):
+            url = self.rpcs[self._i % len(self.rpcs)]
+            try:
+                r = self.http.post(url, json=payload)
+                if r.status_code == 429 or r.status_code >= 500:
+                    raise httpx.HTTPStatusError(f"{r.status_code} from {url}", request=r.request, response=r)
+                r.raise_for_status()
+                return r.json()
+            except (httpx.HTTPStatusError, httpx.TransportError) as e:
+                last = e
+                self._i += 1  # rotate provider
+                self.sleep(min(8.0, 0.5 * 2 ** attempt))
+        raise ChainError(f"all RPC providers failed: {last}")
 
     def _query(self, params: dict) -> dict:
-        r = self.http.post(self.rpc_url, json={"jsonrpc": "2.0", "id": "kavren", "method": "query", "params": params})
-        r.raise_for_status()
-        body = r.json()
+        body = self._post({"jsonrpc": "2.0", "id": "kavren", "method": "query", "params": params})
         if "error" in body:
             raise ChainError(json.dumps(body["error"])[:300])
         if "error" in body.get("result", {}):
@@ -63,7 +99,7 @@ class NearChain:
         from py_near.account import Account
 
         async def go():
-            acc = Account(self.evaluator_id, self.evaluator_key, self.rpc_url)
+            acc = Account(self.evaluator_id, self.evaluator_key, self.rpcs)
             await acc.startup()
             try:
                 r = await acc.function_call(self.contract_id, method, args, gas=self.GAS, amount=0)

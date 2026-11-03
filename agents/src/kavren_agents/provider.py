@@ -42,15 +42,24 @@ class ProviderAgent:
         self.usage: list[dict] = []
         self.log_dir = log_dir
         self.waiting: dict[int, int] = {}  # job_id -> seq we are waiting on
-        self.gave_up: set[tuple[int, int]] = set()  # (job_id, verdict count): never re-spend on the same state
+        self.gave_up: set[tuple[int, int]] = set()
+        self.paid_seen: set[int] = set()  # passed jobs whose payment we already checked  # (job_id, verdict count): never re-spend on the same state
 
     def tick(self) -> list[dict]:
         events = []
+        passed_now = False
         for j in self.chain.view("get_jobs_for_provider", {"provider_id": self.account_id}):
+            if j["status"] == "Passed" and j["job_id"] not in self.paid_seen:
+                passed_now = True
             ev = self.handle(j)
             if ev:
                 events.append(ev)
+        if not passed_now:
+            return events
         claimable = int(self.chain.view("get_claimable", {"account_id": self.account_id}))
+        for j in self.chain.view("get_jobs_for_provider", {"provider_id": self.account_id}):
+            if j["status"] == "Passed":
+                self.paid_seen.add(j["job_id"])
         if claimable > 0:
             res = self.chain.call("withdraw", {})
             events.append({"action": "withdrew", "amount_yocto": str(claimable), "tx": res["tx"]})
@@ -137,14 +146,20 @@ def main() -> None:
     env = {**load_env_file(os.environ.get("PROVIDER_KEY_FILE", "~/.kavren/provider-agent.env")),
            **load_env_file(os.environ.get("NEAR_AI_KEY_FILE", "~/.kavren/near-ai.env")), **os.environ}
     acct, key = env["PROVIDER_ACCOUNT_ID"], env["PROVIDER_FC_PRIVATE_KEY"]
-    chain = AgentChain(env.get("NEAR_RPC_URL", "https://rpc.testnet.near.org"), env["KAVREN_CONTRACT_ID"], acct, key)
+    chain = AgentChain(env.get("NEAR_RPC_URL", ""), env["KAVREN_CONTRACT_ID"], acct, key)
     api = ApiClient(env.get("KAVREN_API_URL", "http://127.0.0.1:8000"), acct, key)
     planner = NearAIPlanner(env["NEAR_AI_API_KEY"], env.get("NEAR_AI_BASE_URL", "https://cloud-api.near.ai/v1"),
                             env.get("NEAR_AI_MODEL") or DEFAULT_MODEL)
     agent = ProviderAgent(acct, chain, api, planner)
     log.info("provider agent %s using model %s", acct, planner.model)
     while True:
-        for ev in agent.tick():
+        try:
+            events = agent.tick()
+        except Exception as e:  # a transient RPC/API error must never kill the agent
+            log.warning("tick failed, will retry: %s", str(e)[:300])
+            time.sleep(30)
+            continue
+        for ev in events:
             log.info("%s", json.dumps(ev, default=str))
         time.sleep(15)
 

@@ -27,7 +27,7 @@ class Settings:
             database_url=e.get("DATABASE_URL", "sqlite:///./data/kavren.db"),
             storage_dir=e.get("STORAGE_DIR", "./data/files"),
             contract_id=e.get("KAVREN_CONTRACT_ID", ""),
-            rpc_url=e.get("NEAR_RPC_URL", "https://rpc.testnet.near.org"),
+            rpc_url=e.get("NEAR_RPC_URL", ""),  # empty -> NEAR-docs-listed providers with failover
             evaluator_account_id=e.get("EVALUATOR_ACCOUNT_ID", ""),
             evaluator_fc_private_key=e.get("EVALUATOR_FC_PRIVATE_KEY", ""),
             auth_recipient=e.get("AUTH_RECIPIENT", "kavren-api"),

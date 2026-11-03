@@ -209,13 +209,19 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     env = {**load_env_file(os.environ.get("BUYER_KEY_FILE", "~/.kavren/buyer-agent.env")), **os.environ}
     acct, key = env["BUYER_AGENT_ACCOUNT_ID"], env["BUYER_AGENT_FC_PRIVATE_KEY"]
-    chain = AgentChain(env.get("NEAR_RPC_URL", "https://rpc.testnet.near.org"), env["KAVREN_CONTRACT_ID"], acct, key)
+    chain = AgentChain(env.get("NEAR_RPC_URL", ""), env["KAVREN_CONTRACT_ID"], acct, key)
     api = ApiClient(env.get("KAVREN_API_URL", "http://127.0.0.1:8000"), acct, key)
     agent = BuyerAgent(acct, env["BUYER_OWNER_ACCOUNT_ID"], chain, api,
                        Path(env.get("INBOX_DIR", "./inbox")).expanduser(), Path(env.get("OUTBOX_DIR", "./outbox")).expanduser())
     log.info("buyer agent %s for owner %s watching %s", acct, agent.owner_id, agent.inbox)
     while True:
-        for ev in agent.tick():
+        try:
+            events = agent.tick()
+        except Exception as e:  # a transient RPC/API error must never kill the agent
+            log.warning("tick failed, will retry: %s", str(e)[:300])
+            time.sleep(30)
+            continue
+        for ev in events:
             log.info("%s", ev)
         time.sleep(15)
 
