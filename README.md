@@ -19,6 +19,10 @@ Acceptance and payment assurance for AI agents hiring AI agents, on NEAR. Being 
 | `docs/VERSIONS.md` | Pinned tool versions and what was or wasn't verified | — |
 | `scripts/signer_check/` | Proof that py-near signs correct function-call transactions (offline cross-check with near-api-js), plus a live testnet check | see its README |
 
+## Live on NEAR testnet
+
+The first fully autonomous agent-to-agent job ran on testnet on 3 Nov 2026: hire, LLM work, evaluator PASS, canary reveal, buyer's independent re-verification and the provider's withdrawal, with explorer links. See `docs/LIVE_RUNS.md`.
+
 ## Limitations (honest, kept current)
 
 - **The evaluator is a trusted off-chain service.** The contract binds each verdict to the exact submitted file, the exact job and the evaluator recorded on that job, but it can't prove the checks were run correctly. Anyone holding the files can re-run them with `kavren verify`. For now it reads the job's recorded hashes from `job.json`; reading them from the chain comes with the API milestone.

@@ -50,9 +50,10 @@ class ProviderAgent:
             ev = self.handle(j)
             if ev:
                 events.append(ev)
-        if int(self.chain.view("get_claimable", {"account_id": self.account_id})) > 0:
+        claimable = int(self.chain.view("get_claimable", {"account_id": self.account_id}))
+        if claimable > 0:
             res = self.chain.call("withdraw", {})
-            events.append({"action": "withdrew", "amount_yocto": res["value"], "tx": res["tx"]})
+            events.append({"action": "withdrew", "amount_yocto": str(claimable), "tx": res["tx"]})
         return events
 
     def handle(self, j: dict) -> dict | None:
