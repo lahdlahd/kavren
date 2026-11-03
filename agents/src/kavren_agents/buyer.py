@@ -47,10 +47,16 @@ class BuyerAgent:
         (self.inbox / "processed").mkdir(exist_ok=True)
         self.state_path = self.outbox / "state.json"
         self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {"jobs": {}}
+        self.state.setdefault("pending", {})
+        self._reconciled = False
 
     # ------------------------------------------------------------------ main loop
     def tick(self) -> list[dict]:
         events = []
+        if not self._reconciled:
+            events.extend(self.reconcile())
+            self._reconciled = True
+            self._save()
         for f in sorted(self.inbox.glob("*.csv")):
             events.append(self.take(f))
         for job_id in list(self.state["jobs"]):
@@ -62,6 +68,9 @@ class BuyerAgent:
 
     # ------------------------------------------------------------------ hiring
     def take(self, path: Path) -> dict:
+        recovered = self._recover_pending(path)
+        if recovered:
+            return recovered
         data = path.read_bytes()
         decision = self.decide(path.name, data)
         if decision["action"] == "wait":
@@ -80,7 +89,10 @@ class BuyerAgent:
         draft = r.json()
         price = int(draft["price_yocto"])
         if price != decision["price_yocto"]:
-            return {"file": path.name, "action": "skip", "reason": "price mismatch between agent and protocol"}
+            out = {"file": path.name, "action": "skip", "reason": "price mismatch between agent and protocol"}
+            self._move(path, "processed")
+            self._receipt(path.stem, out)
+            return out
         args = {"args": {
             "owner_id": self.owner_id, "provider_id": decision["provider_id"], "amount": str(price),
             "template_id": draft["template_id"], "spec_json": draft["spec_json"], "draft_id": draft["draft_id"],
@@ -88,16 +100,80 @@ class BuyerAgent:
             "canary_commitment": draft["canary_commitment"],
             "deadline": int(self.clock()) + DEFAULT_DEADLINE_SECS, "max_attempts": decision["max_attempts"],
         }}
+        # Idempotent hiring: remember the draft BEFORE the transaction, so that if the call
+        # errors after the job was actually created, the next tick finds and adopts it
+        # instead of hiring a second time.
+        self.state.setdefault("pending", {})[path.name] = {
+            "draft_id": draft["draft_id"], "provider_id": decision["provider_id"], "at": int(self.clock())}
+        self._save()
         res = self.chain.call("create_job", args)
         job_id = int(res["value"])
-        self.api.request("POST", f"/jobs/{job_id}/register").raise_for_status()
-        self.state["jobs"][str(job_id)] = {"file": path.name, "draft_id": draft["draft_id"], "create_tx": res["tx"],
-                                           "status": "Open", "price_yocto": str(price)}
+        self._track(job_id, path.name, draft["draft_id"], str(price), create_tx=res["tx"])
+        self.state["pending"].pop(path.name, None)
         self._move(path, "processed")
+        self._save()
+        self._register(job_id, after_write=True)
         out = {"file": path.name, "action": "hired", "job_id": job_id, "provider_id": decision["provider_id"],
                "price_yocto": str(price), "tx": res["tx"]}
         log.info("hired: %s", out)
         return out
+
+    def _recover_pending(self, path: Path) -> Optional[dict]:
+        """A previous hire for this file may have reached the chain even though the call
+        raised. Look for it before hiring again."""
+        p = self.state.get("pending", {}).get(path.name)
+        if not p:
+            return None
+        for j in self._provider_jobs(p["provider_id"]):
+            if j["draft_id"] == p["draft_id"] and j["buyer_agent"] == self.account_id:
+                self._track(j["job_id"], path.name, p["draft_id"], j["amount"])
+                self.state["pending"].pop(path.name)
+                self._move(path, "processed")
+                self._register(j["job_id"])
+                return {"file": path.name, "action": "recovered", "job_id": j["job_id"]}
+        if int(self.clock()) - p["at"] < 180:
+            return {"file": path.name, "action": "wait", "reason": "checking whether the last hire reached the chain"}
+        self.state["pending"].pop(path.name)  # it really did not happen; hiring again is safe
+        return None
+
+    def reconcile(self) -> list[dict]:
+        """Adopt any live job this agent created that its state file does not know about
+        (e.g. after a crash between create_job and saving state)."""
+        budget = self.chain.view("get_budget", {"owner_id": self.owner_id, "agent_id": self.account_id})
+        if not budget:
+            return []
+        out = []
+        for prov in budget["policy"]["allowed_providers"]:
+            for j in self._provider_jobs(prov):
+                if (j["buyer_agent"] == self.account_id and j["owner_id"] == self.owner_id
+                        and str(j["job_id"]) not in self.state["jobs"] and j["status"] in ("Open", "Submitted")):
+                    self._track(j["job_id"], f"adopted-job-{j['job_id']}.csv", j["draft_id"], j["amount"], adopted=True)
+                    self._register(j["job_id"])
+                    out.append({"job_id": j["job_id"], "action": "adopted", "status": j["status"]})
+        return out
+
+    def _provider_jobs(self, provider_id: str) -> list[dict]:
+        jobs, start = [], 0
+        while True:
+            page = self.chain.view("get_jobs_for_provider",
+                                   {"provider_id": provider_id, "from_index": start, "limit": 100})
+            jobs.extend(page)
+            if len(page) < 100:
+                return jobs
+            start += 100
+
+    def _track(self, job_id: int, file: str, draft_id: str, price: str, **extra) -> None:
+        self.state["jobs"][str(job_id)] = {"file": file, "draft_id": draft_id, "status": "Open",
+                                           "price_yocto": price, "registered": False, **extra}
+
+    def _register(self, job_id: int, after_write: bool = False) -> None:
+        st = self.state["jobs"][str(job_id)]
+        url = f"/jobs/{job_id}/register"
+        r = self.api.request_after_write("POST", url) if after_write else self.api.request("POST", url)
+        if r.status_code == 200:
+            st["registered"] = True
+        else:
+            log.warning("register job %s not accepted yet (%s); will retry", job_id, r.status_code)
 
     def decide(self, name: str, data: bytes) -> dict:
         """Pure policy decision from the on-chain budget; no side effects."""
@@ -137,6 +213,8 @@ class BuyerAgent:
         st = self.state["jobs"][str(job_id)]
         if st.get("done"):
             return None
+        if not st.get("registered", True):
+            self._register(job_id)
         j = self.chain.view("get_job", {"job_id": job_id})
         st["status"] = j["status"]
         now = int(self.clock())
@@ -195,7 +273,9 @@ class BuyerAgent:
         (self.outbox / f"{stem}.receipt.json").write_text(json.dumps(body, indent=2, default=str) + "\n")
 
     def _save(self) -> None:
-        self.state_path.write_text(json.dumps(self.state, indent=2) + "\n")
+        tmp = self.state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.state, indent=2) + "\n")
+        tmp.replace(self.state_path)  # atomic: a crash never leaves a half-written state file
 
 
 def _summ(j: dict) -> dict:

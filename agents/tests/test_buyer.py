@@ -62,6 +62,7 @@ def world(tmp_path):
     http = TestClient(create_app(svc))
     buyer_api = ApiClient("unused", BUYER, fc_key(contract, BUYER), http=http)
     prov_api = ApiClient("unused", PROVIDER, fc_key(contract, PROVIDER), http=http)
+    buyer_api.sleep = prov_api.sleep = lambda s: None
     contract.fund_budget(OWNER, BUYER, 5 * NEAR, policy())
     agent = BuyerAgent(BUYER, OWNER, AgentChainFake(contract, BUYER), buyer_api,
                        tmp_path / "inbox", tmp_path / "outbox", clock)
@@ -190,3 +191,123 @@ def test_agent_cannot_exceed_budget_even_if_its_logic_were_wrong(world):
             "owner_id": OWNER, "provider_id": PROVIDER, "amount": str(NEAR), "template_id": "contacts-v1",
             "spec_json": "{}", "draft_id": "d", "input_hash": "1" * 64, "work_hash": "2" * 64,
             "canary_commitment": "3" * 64, "deadline": w["clock"].t + 3600, "max_attempts": 3}})
+
+
+# ---------------------------------------------------------------- read-after-write lag
+class LaggingChain:
+    """The API's view of the chain, `n` reads behind: models an RPC node that has not
+    yet seen the transaction the agent just sent (the live bug of jobs 1 and 2)."""
+
+    def __init__(self, contract):
+        self.c, self.n, self.snap = contract, 0, {}
+
+    def lag(self, n):
+        import copy
+        self.n, self.snap = n, copy.deepcopy(self.c.jobs)
+
+    def get_job(self, job_id):
+        if self.n > 0:
+            self.n -= 1
+            j = self.snap.get(job_id)
+            return json.loads(json.dumps(j)) if j else None
+        return self.c.get_job(job_id)
+
+    def __getattr__(self, name):
+        return getattr(self.c, name)
+
+
+def test_register_lag_does_not_cause_a_second_hire(world):
+    w = world
+    lagging = LaggingChain(w["contract"])
+    w["svc"].chain = lagging
+    lagging.lag(100)  # the API will not see the new job for a long time
+    (w["agent"].inbox / "leads.csv").write_bytes(INPUT)
+    ev = w["agent"].tick()
+    assert ev[0]["action"] == "hired"
+    assert (w["agent"].inbox / "processed" / "leads.csv").exists()  # the file is gone from the inbox
+    st = w["agent"].state["jobs"]["0"]
+    assert st["registered"] is False
+    lagging.n = 0  # the node catches up
+    for _ in range(3):
+        w["agent"].tick()
+    assert len(w["contract"].jobs) == 1  # never hired twice
+    assert w["agent"].state["jobs"]["0"]["registered"] is True
+
+
+def test_register_succeeds_after_a_short_lag_in_the_same_tick(world):
+    w = world
+    lagging = LaggingChain(w["contract"])
+    w["svc"].chain = lagging
+    (w["agent"].inbox / "leads.csv").write_bytes(INPUT)
+    real_call = w["agent"].chain.call
+
+    def call_then_lag(method, args):
+        lagging.lag(2)  # snapshot BEFORE the write: two stale reads, then fresh
+        return real_call(method, args)
+    w["agent"].chain.call = call_then_lag
+    ev = w["agent"].tick()
+    assert ev[0]["action"] == "hired"
+    assert w["agent"].state["jobs"]["0"]["registered"] is True
+
+
+def test_crash_after_create_job_is_recovered_not_rehired(world):
+    w = world
+    (w["agent"].inbox / "leads.csv").write_bytes(INPUT)
+    real_call = w["agent"].chain.call
+
+    def lands_then_raises(method, args):
+        real_call(method, args)
+        raise RuntimeError("RPC timed out waiting for the result")
+    w["agent"].chain.call = lands_then_raises
+    with pytest.raises(RuntimeError):
+        w["agent"].tick()
+    w["agent"].chain.call = real_call
+    assert (w["agent"].inbox / "leads.csv").exists()  # the file is still there...
+    ev = w["agent"].tick()
+    assert ev[0] == {"file": "leads.csv", "action": "recovered", "job_id": 0}  # ...but it is not hired again
+    assert len(w["contract"].jobs) == 1
+    assert (w["agent"].inbox / "processed" / "leads.csv").exists()
+
+
+def test_failed_transaction_is_retried_only_after_the_grace_period(world):
+    w = world
+    (w["agent"].inbox / "leads.csv").write_bytes(INPUT)
+    real_call = w["agent"].chain.call
+
+    def never_lands(method, args):
+        raise RuntimeError("transaction rejected")
+    w["agent"].chain.call = never_lands
+    with pytest.raises(RuntimeError):
+        w["agent"].tick()
+    w["agent"].chain.call = real_call
+    assert w["agent"].tick()[0]["action"] == "wait"  # might still land: do not hire yet
+    w["clock"].t += 200
+    assert w["agent"].tick()[0]["action"] == "hired"
+    assert len(w["contract"].jobs) == 1
+
+
+def test_restart_adopts_live_jobs_missing_from_state(world):
+    w = world
+    (w["agent"].inbox / "a.csv").write_bytes(INPUT)
+    w["agent"].tick()
+    w["agent"].state["jobs"].clear()  # simulate the lost state of the live run
+    w["agent"]._save()
+    restarted = BuyerAgent(BUYER, OWNER, w["agent"].chain, w["agent"].api,
+                           w["agent"].inbox, w["agent"].outbox, w["clock"])
+    ev = restarted.tick()
+    assert ev[0] == {"job_id": 0, "action": "adopted", "status": "Open"}
+    assert restarted.state["jobs"]["0"]["adopted"] is True
+    w["clock"].t += 3700  # past the deadline with no work: the adopted job is refunded
+    ev = restarted.tick()
+    assert ev[0]["action"] == "refunded" and w["contract"].jobs[0]["status"] == "Refunded"
+
+
+def test_adoption_ignores_other_agents_and_finished_jobs(world):
+    w = world
+    (w["agent"].inbox / "a.csv").write_bytes(INPUT)
+    w["agent"].tick()
+    w["contract"].jobs[0]["buyer_agent"] = "someone-else.testnet"
+    restarted = BuyerAgent(BUYER, OWNER, w["agent"].chain, w["agent"].api,
+                           w["agent"].inbox, w["agent"].outbox, w["clock"])
+    restarted.state["jobs"].clear()
+    assert restarted.reconcile() == []

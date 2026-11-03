@@ -40,8 +40,12 @@ class NearChain:
     GAS = 50 * 10**12
 
     def __init__(self, rpc_url, contract_id: str, evaluator_id: str = "", evaluator_key: str = "",
-                 sleep=None, http: httpx.Client | None = None):
+                 sleep=None, http: httpx.Client | None = None, finality: str = "optimistic"):
         import time as _time
+        # "optimistic" sees a transaction as soon as its block is produced. "final" lags
+        # by a few blocks, so an agent reading right after its own write saw stale state
+        # (register 404 / upload 409). Every write is still re-validated by the contract.
+        self.finality = finality
         self.rpcs = rpc_url if isinstance(rpc_url, list) else rpc_list(rpc_url)
         self.rpc_url, self.contract_id = self.rpcs[0], contract_id
         self.evaluator_id, self.evaluator_key = evaluator_id, evaluator_key
@@ -76,7 +80,7 @@ class NearChain:
 
     def view(self, method: str, args: dict) -> object:
         res = self._query({
-            "request_type": "call_function", "finality": "final", "account_id": self.contract_id,
+            "request_type": "call_function", "finality": self.finality, "account_id": self.contract_id,
             "method_name": method, "args_base64": base64.b64encode(json.dumps(args).encode()).decode(),
         })
         return json.loads(bytes(res["result"]).decode())
@@ -86,7 +90,7 @@ class NearChain:
 
     def get_access_key_permission(self, account_id: str, public_key: str) -> Optional[object]:
         try:
-            res = self._query({"request_type": "view_access_key", "finality": "final",
+            res = self._query({"request_type": "view_access_key", "finality": self.finality,
                                "account_id": account_id, "public_key": public_key})
         except ChainError:
             return None

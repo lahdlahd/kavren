@@ -23,3 +23,19 @@ Real transactions, newest first. Every link opens on the public testnet explorer
 | Provider withdraws its 0.24 NEAR (pull payment) | `provider-agent` | [AXzA6guX…LAL](https://testnet.nearblocks.io/txns/AXzA6guXCAUHH4CyFn6vn53xiPBT2dxdfxssmhRYLAL) |
 
 **Timing:** about 3 minutes from file to payment. The LLM planning took about 70 s; the rest is the 15-second polling of each process.
+
+## Incident: read-after-write lag (jobs 1 and 2)
+
+**What went wrong.** On a second run the API read the chain at `final` finality, a few blocks behind the agents' own transactions.
+- The buyer created **job 1**. Its `register` call got 404 ("no such job") because the API's read had not caught up. The tick failed before the agent saved its state or moved the file, so on the next tick it hired again (**job 2**). The owner's on-chain policy (`max_open_jobs = 2`) stopped a third hire.
+- The provider submitted job 1's hash on-chain. Its upload got 409 because the API still saw the job as Open, and the file was not kept, so the evaluator had nothing to judge.
+
+**What protected the funds.** Neither job could be paid without an evaluator PASS, and the contract lets anyone refund a job once its timer runs out. Job 1 is the real test of the evaluator-timeout refund path.
+
+**Fix** (commit after `253d1cf`):
+- Chain reads use `optimistic` finality. The contract still re-checks every write.
+- Agents retry 404/409 for a short time after their own transactions.
+- The buyer records a pending hire *before* `create_job`. After the transaction it saves the job and moves the file, and only then registers. Registering is retried on later ticks.
+- On restart the buyer adopts any live job it created that its state file does not know about.
+- The provider writes each submission to disk before `submit_work` and re-uploads it while the job is Submitted with a matching hash.
+- Regression tests cover each step, using a lagging chain view.

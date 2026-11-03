@@ -49,7 +49,8 @@ def hire(w):
 
 
 def provider(w, planner):
-    return ProviderAgent(PROVIDER, AgentChainFake(w["contract"], PROVIDER), w["prov_api"], planner, w["clock"])
+    return ProviderAgent(PROVIDER, AgentChainFake(w["contract"], PROVIDER), w["prov_api"], planner, w["clock"],
+                         state_dir=w["tmp"] / "provider-state")
 
 
 def test_lazy_first_plan_is_caught_locally_and_revised_before_spending_an_attempt(world):
@@ -231,3 +232,32 @@ def test_facts_table_reports_tool_computed_facts():
     lines = t.splitlines()
     assert lines[1].startswith("r1|ada@x.co|-|true|false|")
     assert lines[2].startswith("r2|bad@x|full_name|false|-|")
+
+
+def test_upload_lag_is_retried_and_a_lost_upload_is_delivered_later(world):
+    """The live bug of job 1: submit_work landed, the upload got 409 because the API's
+    node had not seen it yet, and the file was lost."""
+    from test_buyer import LaggingChain
+    w = world
+    jid = hire(w)
+    lagging = LaggingChain(w["contract"])
+    w["svc"].chain = lagging
+    p = provider(w, Scripted())
+    real_call = p.chain.call
+
+    def call_then_lag(method, args):
+        if method == "submit_work":
+            lagging.lag(100)  # API keeps seeing the pre-submit state, longer than the in-tick retries
+        return real_call(method, args)
+    p.chain.call = call_then_lag
+    ev = p.tick()
+    assert ev[0]["action"] == "submitted" and ev[0]["uploaded"] is False
+    pending = list((w["tmp"] / "provider-state").glob("*.csv"))
+    assert len(pending) == 1  # the file survived
+    lagging.n = 0
+    restarted = provider(w, Scripted())  # even across a restart
+    ev = restarted.tick()
+    assert ev[0]["action"] == "uploaded_pending"
+    assert not list((w["tmp"] / "provider-state").glob("*.csv"))
+    w["svc"].process_pending()
+    assert w["contract"].jobs[jid]["status"] == "Passed"

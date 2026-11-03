@@ -35,6 +35,8 @@ class ApiClient:
         self.account_id, self.private_key = account_id, private_key
         self.http = http or httpx.Client(base_url=base_url, timeout=60)
         self.token: Optional[str] = None
+        import time as _time
+        self.sleep = _time.sleep
 
     def login(self) -> None:
         ch = self.http.post("/auth/challenge", json={"account_id": self.account_id})
@@ -55,6 +57,17 @@ class ApiClient:
                 self.token = None
                 continue
             return r
+        return r
+
+    def request_after_write(self, method: str, url: str, tries: int = 6, delay: float = 3.0, **kw) -> httpx.Response:
+        """For calls made right after our own on-chain transaction: the API may not see
+        it yet (a lagging RPC node), so 404/409 are retried a few times before giving up."""
+        r = self.request(method, url, **kw)
+        for _ in range(tries - 1):
+            if r.status_code not in (404, 409):
+                break
+            self.sleep(delay)
+            r = self.request(method, url, **kw)
         return r
 
     def public(self, method: str, url: str, **kw) -> httpx.Response:

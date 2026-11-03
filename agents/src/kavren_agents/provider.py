@@ -36,8 +36,13 @@ MIN_TIME_LEFT = 120  # don't start an attempt with less than 2 minutes to the de
 
 class ProviderAgent:
     def __init__(self, account_id: str, chain, api, planner: Planner, clock: Callable[[], float] = time.time,
-                 log_dir: Path | None = None, on_progress: Callable[[], None] | None = None):
+                 log_dir: Path | None = None, on_progress: Callable[[], None] | None = None,
+                 state_dir: Path | None = None):
         self.on_progress = on_progress
+        # Submissions are written here BEFORE submit_work, so a file whose upload fails
+        # (API lag, crash, restart) can still be delivered while the job is Submitted.
+        self.pending_dir = Path(state_dir or Path.home() / ".kavren-state" / "provider")
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.account_id, self.chain, self.api, self.planner, self.clock = account_id, chain, api, planner, clock
         self.usage: list[dict] = []
         self.log_dir = log_dir
@@ -68,7 +73,7 @@ class ProviderAgent:
     def handle(self, j: dict) -> dict | None:
         jid = j["job_id"]
         if j["status"] == "Submitted":
-            return None  # evaluator is working
+            return self._deliver_pending(j)  # usually a no-op: the evaluator is working
         if j["status"] != "Open":
             self.waiting.pop(jid, None)
             return None
@@ -93,12 +98,34 @@ class ProviderAgent:
             self.gave_up.add(state)
             return {"job_id": jid, "action": "gave_up", "reason": "no plan passed the public checks", "local": local}
         h = sha256_hex(sub)
+        pending = self._pending_path(jid, h)
+        pending.write_bytes(sub)
         res = self.chain.call("submit_work", {"job_id": jid, "output_hash": h})
-        up = self.api.request("POST", f"/jobs/{jid}/submissions", files={"file": ("submission.csv", sub, "text/csv")})
-        up.raise_for_status()
         self.waiting[jid] = res["value"]
+        up = self._upload(jid, sub, after_write=True)
         return {"job_id": jid, "action": "submitted", "seq": res["value"], "output_hash": h, "tx": res["tx"],
-                "local_revisions": len(local) - 1}
+                "uploaded": up, "local_revisions": len(local) - 1}
+
+    def _pending_path(self, jid: int, h: str) -> Path:
+        return self.pending_dir / f"job{jid}-{h}.csv"
+
+    def _upload(self, jid: int, sub: bytes, after_write: bool = False) -> bool:
+        kw = {"files": {"file": ("submission.csv", sub, "text/csv")}}
+        url = f"/jobs/{jid}/submissions"
+        r = self.api.request_after_write("POST", url, **kw) if after_write else self.api.request("POST", url, **kw)
+        if r.status_code == 200:
+            self._pending_path(jid, sha256_hex(sub)).unlink(missing_ok=True)
+            return True
+        log.warning("upload for job %s not accepted yet (%s); will retry", jid, r.status_code)
+        return False
+
+    def _deliver_pending(self, j: dict) -> dict | None:
+        p = self._pending_path(j["job_id"], j["current_output_hash"] or "")
+        if not p.exists():
+            return None
+        if self._upload(j["job_id"], p.read_bytes()):
+            return {"job_id": j["job_id"], "action": "uploaded_pending", "output_hash": j["current_output_hash"]}
+        return None
 
     def _plan_until_clean(self, spec, work: bytes, feedback):
         attempts = []
