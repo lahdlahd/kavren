@@ -48,8 +48,11 @@ jobs:
             contract/sandbox-tests
       - name: contract invariant tests (unit, simulated time)
         run: cd contract && cargo test
-      - name: install cargo-near 0.22.0
-        run: cargo install cargo-near --version 0.22.0 --locked
+      - name: install cargo-near 0.22.0 (official prebuilt binary)
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/cargo-near/releases/download/cargo-near-v0.22.0/cargo-near-installer.sh | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/cargo-near" --version
       - name: build wasm
         run: cd contract && cargo near build non-reproducible-wasm
       - name: sandbox integration tests (real runtime, real access keys)
@@ -57,6 +60,12 @@ jobs:
           WASM=$(find "$GITHUB_WORKSPACE/contract/target/near" -name 'kavren_contract.wasm' | head -1)
           test -n "$WASM" && ls -la "$WASM"
           cd contract/sandbox-tests && KAVREN_WASM="$WASM" cargo test -- --test-threads=2 --nocapture
+      - name: keep the built wasm (used for testnet deployment)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kavren-contract-wasm
+          path: contract/target/near/
+          retention-days: 14
 
   secrets:
     runs-on: ubuntu-24.04
