@@ -93,8 +93,9 @@ def test_pass_submission_agrees_with_answer_key():
         v = dict(zip(COLS, got[kept[0]][4:]))
         assert v["full_name"] == g["values"]["full_name"] and v["email"] == g["values"]["email"]
         assert v["signup_date"] in g["values"]["signup_date"]
-    rejected = sum(1 for r in sub[1:] if r[1] == "rejected")
-    assert rejected * 100 <= SPEC.max_reject_pct * len(WORK)
+    real = [r for r in sub[1:] if ID2LABEL[r[0]].startswith("r")]
+    rejected = sum(1 for r in real if r[1] == "rejected")
+    assert rejected * 100 <= SPEC.max_reject_pct * len(real)
 
 
 def test_canary_commitment_and_contents():

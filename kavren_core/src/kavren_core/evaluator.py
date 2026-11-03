@@ -316,9 +316,12 @@ def _run_checks(spec, work, work_order, sub_rows, cols, out: _Collector, canary_
             if not ok:
                 out.add("C7", "NOT_DERIVED_FROM_INPUT", rid)
 
-    # ---------------- C8 rejection cap (integer arithmetic)
-    rejected = sum(1 for s in sub.values() if s["outcome"] == "rejected")
-    if rejected * 100 > spec.max_reject_pct * len(work_order):
+    # ---------------- C8 rejection cap over the buyer's real records only
+    # (canaries are excluded: they include records that MUST be rejected)
+    canary_ids = {c["record_id"] for c in canary_set["canaries"]} if canary_set is not None else set()
+    real = [rid for rid in work_order if rid not in canary_ids]
+    rejected = sum(1 for rid in real if rid in sub and sub[rid]["outcome"] == "rejected")
+    if rejected * 100 > spec.max_reject_pct * len(real):
         out.add("C8", "REJECT_CAP_EXCEEDED")
 
     # ---------------- H1 canaries

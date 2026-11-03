@@ -50,7 +50,7 @@ Each check runs independently and reports every violation it finds, as `(check, 
 | **C5 Completeness** | Every required column is non-empty in every kept row |
 | **C6 Format** | Kept rows: text cells are whitespace-normalised; email cells are lowercase and trimmed; non-empty date cells parse with `output_format` |
 | **C7 Fidelity** | For every kept row and column, let G be the row plus every row merged into it. The output value must equal the allowed transformation of the **work-file** value of some member of G (text: equal after normalisation, ignoring case; email: equal after normalising both sides; date: the same calendar date). C7 checks *where a value came from*; C6 checks *its form*. The output may be empty only if every member of G is empty in that column. Date cells that already failed C6 are skipped here, so one problem isn't reported twice |
-| **C8 Rejection cap** | `rejected rows / all rows × 100 ≤ max_reject_pct`, computed over all rows including canaries, with integer arithmetic: `rejected × 100 ≤ max_reject_pct × total` |
+| **C8 Rejection cap** | `rejected × 100 ≤ max_reject_pct × total`, counting only the buyer's **real** records, never canaries, with integer arithmetic. Canaries are excluded because some of them *must* be rejected; counting them would use up the buyer's allowance on small files |
 | **H1 Canaries** | Every canary expectation in the committed set holds (section 5). During a job, only a count of failures is reported |
 
 ### 4.1 Rejection truth (C2f)
@@ -82,6 +82,16 @@ A canary is a synthetic record inserted into the work file. The committed set is
 - `{"type":"duplicate_group","record_ids":[...]}`: exactly one member is kept, and every other member is merged into that one.
 
 The deliverable for the buyer removes canary rows.
+
+**Generation** (`kavren_core/canaries.py`): about 8 canaries per job, built from the input's own profile (email domains, date range):
+- 2 messy-but-fixable records → `kept_with_values`
+- 1 clean record → `kept_with_values`
+- 1 duplicate pair → `duplicate_group`
+- 1 each of an unfixable email, a missing required field and an impossible date → `rejected_with_reason`
+
+Every expectation is self-checked against the same value rules the evaluator uses before the draft is issued. Canary keys never collide with the buyer's records. Record IDs, positions and the 256-bit salt come from a cryptographically secure random source.
+
+**Winnable-job check:** a draft is refused if the buyer's file has more *unavoidable* rejections than the cap allows. A row is unavoidable when a rejection reason is true and it has no clean twin to merge into. Without this check, the protocol could create a job that no honest provider could ever pass.
 
 ## 6. Report
 

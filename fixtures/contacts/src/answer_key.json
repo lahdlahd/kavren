@@ -34,7 +34,7 @@
     {"type": "rejected_with_reason", "label": "k5", "reason": "MISSING_REQUIRED"},
     {"type": "kept_with_values", "label": "k6", "values": {"full_name": "Esther Ojo", "email": "esther.ojo@example.com", "signup_date": "2026-09-30"}}
   ],
-  "rejection_arithmetic": "pass case rejects 6 of 26 rows: 6*100=600 <= 25*26=650, so C8 passes",
+  "rejection_arithmetic": "C8 counts real records only: the pass case rejects 4 of 20 (400 <= 500, passes); fail_false_reject rejects 9 of 20 (900 > 500, fails)",
   "submissions": {
     "pass": {"edit": "none (hand-written submission_pass.csv)", "verdict": "PASS", "violations": []},
     "fail_empty": {"edit": "header only, no rows", "verdict": "FAIL",
@@ -47,7 +47,7 @@
     "fail_false_reject": {"edit": "r01 r11 r12 r18 r20 rejected as INVALID_EMAIL with data cells emptied", "verdict": "FAIL",
       "violations": [["C2", "REASON_NOT_TRUE", "r01"], ["C2", "REASON_NOT_TRUE", "r11"], ["C2", "REASON_NOT_TRUE", "r12"], ["C2", "REASON_NOT_TRUE", "r18"], ["C2", "REASON_NOT_TRUE", "r20"], ["C8", "REJECT_CAP_EXCEEDED", null]],
       "canary_failures": 0, "failing_checks": ["C2", "C8"],
-      "if_C2f_not_approved": {"violations": [["C8", "REJECT_CAP_EXCEEDED", null]], "failing_checks": ["C8"], "note": "11 of 26 rejected: 1100 > 650"}},
+      "if_C2f_not_approved": {"violations": [["C8", "REJECT_CAP_EXCEEDED", null]], "failing_checks": ["C8"], "note": "9 of 20 real records rejected: 900 > 500"}},
     "fail_fake_merge": {"edit": "r12 merged into r01 (different emails) with data cells emptied", "verdict": "FAIL",
       "violations": [["C2", "MERGE_KEY_MISMATCH", "r12"]], "canary_failures": 0, "failing_checks": ["C2"]},
     "fail_format": {"edit": "r02 date left as 03/02/2026; r03 email left as CHIDI@EXAMPLE.COM; r12 date left as 10 May 2026", "verdict": "FAIL",

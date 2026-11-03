@@ -25,6 +25,10 @@ jobs:
             kavren verify fixtures/contacts --submission "$s" > /dev/null
           done
           kavren verify fixtures/contacts --submission pass
+      - name: API tests (NEP-413 auth, access control, worker) against a fake chain
+        run: |
+          pip install -e 'api[test]'
+          cd api && pytest -q
       - name: fixtures rebuild byte-identically
         run: |
           python3 fixtures/build_fixtures.py > /dev/null

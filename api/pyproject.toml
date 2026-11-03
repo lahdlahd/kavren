@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kavren-api"
+version = "0.1.0"
+description = "KAVREN API: drafts, NEP-413 auth, private files, evaluator worker"
+requires-python = ">=3.11"
+dependencies = [
+  "kavren-core",
+  "fastapi==0.162.0",
+  "uvicorn==0.54.0",
+  "sqlalchemy==2.1.6",
+  "httpx==0.28.1",
+  "python-multipart==0.0.33",
+  "pynacl>=1.5",
+  "base58>=2.1",
+  "py-near==1.2.22",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0"]
+postgres = ["psycopg[binary]>=3.2"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
