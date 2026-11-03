@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e 'kavren_core[test]'
+      - name: kavren_core tests (rules, spec, hand-checked answer key)
+        run: cd kavren_core && pytest -q
+      - name: fixtures rebuild byte-identically
+        run: |
+          python3 fixtures/build_fixtures.py > /dev/null
+          git diff --exit-code -- fixtures/
+
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            contract
+            contract/sandbox-tests
+      - name: contract invariant tests (unit, simulated time)
+        run: cd contract && cargo test
+      - name: install cargo-near 0.22.0
+        run: cargo install cargo-near --version 0.22.0 --locked
+      - name: build wasm
+        run: cd contract && cargo near build non-reproducible-wasm
+      - name: sandbox integration tests (real runtime, real access keys)
+        run: |
+          WASM=$(find "$GITHUB_WORKSPACE/contract/target/near" -name 'kavren_contract.wasm' | head -1)
+          test -n "$WASM" && ls -la "$WASM"
+          cd contract/sandbox-tests && KAVREN_WASM="$WASM" cargo test -- --test-threads=2 --nocapture
+
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks v8.30.1
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar xz gitleaks
+          ./gitleaks git . --config .gitleaks.toml --no-banner

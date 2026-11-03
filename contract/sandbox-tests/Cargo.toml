@@ -1,0 +1,18 @@
+[package]
+name = "kavren-sandbox-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Integration tests against a local NEAR sandbox node (real runtime, real wasm,
+# real access-key rules). They need: the wasm built by `cargo near build` and the
+# sandbox binary download, so they run in CI (.github/workflows/contract.yml).
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+near-workspaces = "=0.24.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde_json = "1"
+anyhow = "1"

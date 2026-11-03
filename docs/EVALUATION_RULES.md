@@ -2,7 +2,7 @@
 
 This is the normative definition of what the evaluator checks. The code in `kavren_core` implements it, and the fixtures in `fixtures/` are hand-checked against it. If the code and this document disagree, the code has a bug.
 
-Status: **draft for owner approval.** Items marked **[PROPOSED]** are refinements found while writing the answer key. They aren't approved yet.
+Status: **approved 3 Nov 2026.** Rejection truth (C2f) was approved by the owner on 3 Nov 2026.
 
 ## 1. Canonical JSON and hashes
 
@@ -44,7 +44,7 @@ Each check runs independently and reports every violation it finds, as `(check, 
 | Check | Rule |
 |---|---|
 | **C1 Schema** | The file obeys the dialect; the header equals the submission header exactly; `_outcome` is one of `kept`, `merged`, `rejected` |
-| **C2 Accounting** | (a) The set of submission `record_id`s equals the work file's set, each exactly once. (b) `kept` rows: `_merged_into` and `_reason` are empty. (c) `merged` rows: `_merged_into` names a `kept` record, `_reason` is empty, and data cells are empty. (d) `rejected` rows: `_reason` is one of the spec's reason codes, `_merged_into` is empty, and data cells are empty. (e) **Merge truth:** a merged record and its target have the same, non-empty dedupe key in the **work file**. (f) **[PROPOSED] Rejection truth:** the stated reason is true of the work-file record (see 4.1) |
+| **C2 Accounting** | (a) The set of submission `record_id`s equals the work file's set, each exactly once. (b) `kept` rows: `_merged_into` and `_reason` are empty. (c) `merged` rows: `_merged_into` names a `kept` record, `_reason` is empty, and data cells are empty. (d) `rejected` rows: `_reason` is one of the spec's reason codes, `_merged_into` is empty, and data cells are empty. (e) **Merge truth:** a merged record and its target have the same, non-empty dedupe key in the **work file**. (f) **Rejection truth:** the stated reason is true of the work-file record (see 4.1) |
 | **C3 Duplicates** | No two kept rows share a dedupe key, computed on the **output** values. Each kept row whose key already appeared on an earlier kept row (in file order) is reported |
 | **C4 Email** | Every non-empty email cell in a kept row is valid under the email rule **after normalisation**. Whether the cell was actually normalised is C6's job, so one problem isn't reported twice |
 | **C5 Completeness** | Every required column is non-empty in every kept row |
@@ -53,7 +53,7 @@ Each check runs independently and reports every violation it finds, as `(check, 
 | **C8 Rejection cap** | `rejected rows / all rows × 100 ≤ max_reject_pct`, computed over all rows including canaries, with integer arithmetic: `rejected × 100 ≤ max_reject_pct × total` |
 | **H1 Canaries** | Every canary expectation in the committed set holds (section 5). During a job, only a count of failures is reported |
 
-### 4.1 [PROPOSED] Rejection truth (C2f)
+### 4.1 Rejection truth (C2f)
 
 | Reason | True when, for the work-file record |
 |---|---|
@@ -61,7 +61,9 @@ Each check runs independently and reports every violation it finds, as `(check, 
 | `INVALID_EMAIL` | some email column is non-empty and its normalised value is invalid |
 | `INVALID_DATE` | some date column is non-empty and can't be parsed |
 
-**Why this was added:** without it, a provider can reject up to `max_reject_pct` of good records by falsely claiming they're invalid. Canaries would catch that only if a canary happened to be among those records. **The consequence:** for this CSV category, the public checks then fully determine whether the cleaning was correct, so canaries (H1) become a second layer that is redundant with them. That's fine (see the Phase 0 report), but it should be a deliberate choice.
+**Why:** without this check, a provider could discard up to `max_reject_pct` of good records just by calling them invalid. **The evaluator never accepts the provider's stated reason as given.** It re-derives the reason from the work file's own values using the rules in section 3. Merges get the same treatment (C2e).
+
+**Consequence (accepted by the owner):** for CSV, the public checks fully determine whether the cleaning is correct, so canaries (H1) are a second layer. Every canary failure in the fixtures is also caught by a public check.
 
 ## 5. Canaries
 
