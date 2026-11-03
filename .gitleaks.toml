@@ -1,0 +1,14 @@
+title = "kavren gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "near-private-key"
+description = "NEAR ed25519/secp256k1 private key"
+regex = '''(ed25519|secp256k1):[1-9A-HJ-NP-Za-km-z]{60,}'''
+tags = ["near", "key"]
+
+[allowlist]
+description = "test-only keys generated deterministically inside test code"
+paths = ['''scripts/signer_check/fixtures/.*''']

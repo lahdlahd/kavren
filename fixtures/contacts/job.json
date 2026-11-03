@@ -1,0 +1,23 @@
+{
+  "template_id": "contacts-v1",
+  "spec_hash": "f5ad01bc48f4cac4b9efc97c6ae6b0d754452880e7bb09560761b472463f2319",
+  "input_hash": "c9eefc4dd4fae1ec1af788a5e89157818a3beec82b0e8fd2d27a95e079bdeb6f",
+  "work_hash": "9e0a20615f1a24a86f459af79c23024253ffc75e774c7d26df4a67183f2fa76e",
+  "canary_commitment": "403858a4de43d9d5a6c8bcb2818e266339b2b192e676c2ebd06b547660ed470d",
+  "submission_hashes": {
+    "pass": "58c62c1a3837590a4be5b98a15340fcfef6b89ba8ed47afabb3c71fa0bdfd970",
+    "fail_empty": "2623d17549f1511d471cc52c6cb46fc959c25c4420ef13b8a6b659bd83e9cfff",
+    "fail_deletion": "0bacfc0e2fa59ace7d7cc0372834533f24c744b919048c90a01ce8f7ffb48590",
+    "fail_fabricated": "b244e6bf7e54fa49c417e556dc8888e03f6f349a85e30198b95c970510a139bc",
+    "fail_false_reject": "97375069aa67d7e7f5d8259aa55187d1ca65024c6c56ac7449dda095720d4de6",
+    "fail_fake_merge": "2555cf9fb9867e95928236653ec3b0ddb2391b3f0677df6aba1e69f3b5103551",
+    "fail_format": "885700c05394d4c54c904203869b9ecd3dce3c40aef17427f393001956cce185",
+    "fail_canary_dup": "e561a172c2f87fb28f5082eca6a794e09f75386ee9c2221a00b52e4acf9f3107",
+    "fail_canary_date": "76365c61c7f28a3b49d354ae69148ac6e792352b80bc9e676ad9ba740ece85e6"
+  },
+  "rows": {
+    "input": 20,
+    "canaries": 6,
+    "work": 26
+  }
+}

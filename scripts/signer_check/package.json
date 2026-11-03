@@ -1,0 +1,8 @@
+{
+  "name": "kavren-signer-check",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "near-api-js": "7.4.0"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "_about": "Hand-checked answer key for fixtures/contacts under docs/EVALUATION_RULES.md (evaluator 0.1.0). Labels: r01-r20 = input rows in order; k1-k6 = canaries. Values are exact expected output strings; for text the evaluator also accepts case changes (kavren-text/1).",
+  "template_id": "contacts-v1",
+  "canary_positions": {"k1": "r03", "k2": "r06", "k3": "r11", "k4": "r14", "k5": "r17", "k6": "r20"},
+  "records": {
+    "r01": {"outcome": "kept", "values": {"full_name": "Amaka Obi", "email": "amaka.obi@example.com", "signup_date": "2026-01-15"}, "why": "already clean"},
+    "r02": {"outcome": "kept", "values": {"full_name": "Tunde Bakare", "email": "tunde.bakare@example.com", "signup_date": "2026-02-03"}, "why": "whitespace collapsed; email trimmed+lowercased; DD/MM/YYYY -> 2026-02-03"},
+    "r05": {"outcome": "rejected", "reason": "INVALID_EMAIL", "why": "domain has no TLD; adding .com would be fabrication"},
+    "r06": {"outcome": "rejected", "reason": "MISSING_REQUIRED", "why": "email empty"},
+    "r09": {"outcome": "rejected", "reason": "INVALID_DATE", "why": "31/02 does not exist; blanking an optional non-empty value is not allowed (C7)"},
+    "r10": {"outcome": "kept", "values": {"full_name": "Segun Ade", "email": "segun.ade@example.com", "signup_date": ""}, "why": "optional date empty in input, stays empty"},
+    "r11": {"outcome": "kept", "values": {"full_name": "Okonkwo, Emeka", "email": "emeka@example.com", "signup_date": "2026-05-10"}, "why": "quoted comma must survive"},
+    "r12": {"outcome": "kept", "values": {"full_name": "Adébáyọ̀ Ọlá", "email": "adebayo.ola@example.com", "signup_date": "2026-05-10"}, "why": "UTF-8 diacritics preserved; D MMM YYYY parsed"},
+    "r13": {"outcome": "rejected", "reason": "INVALID_EMAIL", "why": "trailing dot in domain"},
+    "r17": {"outcome": "kept", "values": {"full_name": "Halima Sani", "email": "halima.sani@example.com", "signup_date": "2026-06-03"}, "why": "already clean"},
+    "r18": {"outcome": "kept", "values": {"full_name": "Peter Obi Jr", "email": "peter.jr@example.co.uk", "signup_date": "2026-07-01"}, "why": "multi-label domain is valid"},
+    "r19": {"outcome": "kept", "values": {"full_name": "Zainab Ali", "email": "zainab@example.com", "signup_date": "2026-06-30"}, "why": "email lowercased"},
+    "r20": {"outcome": "kept", "values": {"full_name": "Femi Kuti", "email": "femi+news@example.com", "signup_date": "2026-07-01"}, "why": "plus sign valid; D MMM YYYY parsed"},
+    "k1": {"outcome": "kept", "values": {"full_name": "Bisi Johnson", "email": "bisi.j@example.com", "signup_date": "2026-08-07"}, "why": "canary: whitespace, uppercase email, DD/MM/YYYY (07/08 is 7 Aug, not 8 Jul)"},
+    "k4": {"outcome": "rejected", "reason": "INVALID_EMAIL", "why": "canary: single-label domain"},
+    "k5": {"outcome": "rejected", "reason": "MISSING_REQUIRED", "why": "canary: email empty"},
+    "k6": {"outcome": "kept", "values": {"full_name": "Esther Ojo", "email": "esther.ojo@example.com", "signup_date": "2026-09-30"}, "why": "canary: DD/MM/YYYY"}
+  },
+  "groups": [
+    {"members": ["r03", "r04"], "values": {"full_name": "Chidi Okafor", "email": "chidi@example.com", "signup_date": ["2026-03-05"]}, "why": "same email after lowercasing; both dates are 5 Mar 2026"},
+    {"members": ["r07", "r08"], "values": {"full_name": "Funmilayo Adeyemi", "email": "funmi@example.com", "signup_date": ["2026-04-03", "2026-04-04"]}, "why": "same email; the kept row must carry the name from r08 (r07's is empty); either member's date is allowed"},
+    {"members": ["r14", "r15", "r16"], "values": {"full_name": "Yusuf Bello", "email": "yusuf@example.com", "signup_date": ["2026-06-02"]}, "why": "three-way duplicate; all dates are 2 Jun 2026"},
+    {"members": ["k2", "k3"], "values": {"full_name": "Daniel Okoro", "email": "daniel.okoro@example.com", "signup_date": ["2026-08-09"]}, "why": "canary duplicate pair"}
+  ],
+  "canary_expectations": [
+    {"type": "kept_with_values", "label": "k1", "values": {"full_name": "Bisi Johnson", "email": "bisi.j@example.com", "signup_date": "2026-08-07"}},
+    {"type": "duplicate_group", "labels": ["k2", "k3"]},
+    {"type": "rejected_with_reason", "label": "k4", "reason": "INVALID_EMAIL"},
+    {"type": "rejected_with_reason", "label": "k5", "reason": "MISSING_REQUIRED"},
+    {"type": "kept_with_values", "label": "k6", "values": {"full_name": "Esther Ojo", "email": "esther.ojo@example.com", "signup_date": "2026-09-30"}}
+  ],
+  "rejection_arithmetic": "pass case rejects 6 of 26 rows: 6*100=600 <= 25*26=650, so C8 passes",
+  "submissions": {
+    "pass": {"edit": "none (hand-written submission_pass.csv)", "verdict": "PASS", "violations": []},
+    "fail_empty": {"edit": "header only, no rows", "verdict": "FAIL",
+      "violations": [["C2", "MISSING_RECORD", "*all 26*"]], "canary_failures": 5, "failing_checks": ["C2", "H1"]},
+    "fail_deletion": {"edit": "drop rows r05 r06 r09 r13 k4 k5 (silently delete the messy records)", "verdict": "FAIL",
+      "violations": [["C2", "MISSING_RECORD", "r05"], ["C2", "MISSING_RECORD", "r06"], ["C2", "MISSING_RECORD", "r09"], ["C2", "MISSING_RECORD", "r13"], ["C2", "MISSING_RECORD", "k4"], ["C2", "MISSING_RECORD", "k5"]],
+      "canary_failures": 2, "failing_checks": ["C2", "H1"]},
+    "fail_fabricated": {"edit": "r05 kept as Ngozi Eze, ngozi.eze@example.com, 2026-04-01 (invented .com)", "verdict": "FAIL",
+      "violations": [["C7", "NOT_DERIVED_FROM_INPUT", "r05"]], "canary_failures": 0, "failing_checks": ["C7"]},
+    "fail_false_reject": {"edit": "r01 r11 r12 r18 r20 rejected as INVALID_EMAIL with data cells emptied", "verdict": "FAIL",
+      "violations": [["C2", "REASON_NOT_TRUE", "r01"], ["C2", "REASON_NOT_TRUE", "r11"], ["C2", "REASON_NOT_TRUE", "r12"], ["C2", "REASON_NOT_TRUE", "r18"], ["C2", "REASON_NOT_TRUE", "r20"], ["C8", "REJECT_CAP_EXCEEDED", null]],
+      "canary_failures": 0, "failing_checks": ["C2", "C8"],
+      "if_C2f_not_approved": {"violations": [["C8", "REJECT_CAP_EXCEEDED", null]], "failing_checks": ["C8"], "note": "11 of 26 rejected: 1100 > 650"}},
+    "fail_fake_merge": {"edit": "r12 merged into r01 (different emails) with data cells emptied", "verdict": "FAIL",
+      "violations": [["C2", "MERGE_KEY_MISMATCH", "r12"]], "canary_failures": 0, "failing_checks": ["C2"]},
+    "fail_format": {"edit": "r02 date left as 03/02/2026; r03 email left as CHIDI@EXAMPLE.COM; r12 date left as 10 May 2026", "verdict": "FAIL",
+      "violations": [["C6", "BAD_DATE_FORMAT", "r02"], ["C6", "NOT_NORMALISED", "r03"], ["C6", "BAD_DATE_FORMAT", "r12"]],
+      "canary_failures": 0, "failing_checks": ["C6"]},
+    "fail_canary_dup": {"edit": "k3 kept as Daniel Okoro, daniel.okoro@example.com, 2026-08-09 instead of merged", "verdict": "FAIL",
+      "violations": [["C3", "DUPLICATE_KEY", "k3"]], "canary_failures": 1, "failing_checks": ["C3", "H1"]},
+    "fail_canary_date": {"edit": "k1 date output 2026-07-08 (read 07/08 as month/day)", "verdict": "FAIL",
+      "violations": [["C7", "NOT_DERIVED_FROM_INPUT", "k1"]], "canary_failures": 1, "failing_checks": ["C7", "H1"]}
+  }
+}

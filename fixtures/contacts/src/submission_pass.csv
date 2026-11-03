@@ -1,0 +1,27 @@
+record_id,_outcome,_merged_into,_reason,full_name,email,signup_date
+r01,kept,,,Amaka Obi,amaka.obi@example.com,2026-01-15
+r02,kept,,,Tunde Bakare,tunde.bakare@example.com,2026-02-03
+r03,kept,,,Chidi Okafor,chidi@example.com,2026-03-05
+k1,kept,,,Bisi Johnson,bisi.j@example.com,2026-08-07
+r04,merged,r03,,,,
+r05,rejected,,INVALID_EMAIL,,,
+r06,rejected,,MISSING_REQUIRED,,,
+k2,kept,,,Daniel Okoro,daniel.okoro@example.com,2026-08-09
+r07,merged,r08,,,,
+r08,kept,,,Funmilayo Adeyemi,funmi@example.com,2026-04-04
+r09,rejected,,INVALID_DATE,,,
+r10,kept,,,Segun Ade,segun.ade@example.com,
+r11,kept,,,"Okonkwo, Emeka",emeka@example.com,2026-05-10
+k3,merged,k2,,,,
+r12,kept,,,Adébáyọ̀ Ọlá,adebayo.ola@example.com,2026-05-10
+r13,rejected,,INVALID_EMAIL,,,
+r14,kept,,,Yusuf Bello,yusuf@example.com,2026-06-02
+k4,rejected,,INVALID_EMAIL,,,
+r15,merged,r14,,,,
+r16,merged,r14,,,,
+r17,kept,,,Halima Sani,halima.sani@example.com,2026-06-03
+k5,rejected,,MISSING_REQUIRED,,,
+r18,kept,,,Peter Obi Jr,peter.jr@example.co.uk,2026-07-01
+r19,kept,,,Zainab Ali,zainab@example.com,2026-06-30
+r20,kept,,,Femi Kuti,femi+news@example.com,2026-07-01
+k6,kept,,,Esther Ojo,esther.ojo@example.com,2026-09-30

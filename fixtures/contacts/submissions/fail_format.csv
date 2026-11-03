@@ -1,0 +1,27 @@
+record_id,_outcome,_merged_into,_reason,full_name,email,signup_date
+e7e76c7961b2,kept,,,Amaka Obi,amaka.obi@example.com,2026-01-15
+0e516058c794,kept,,,Tunde Bakare,tunde.bakare@example.com,03/02/2026
+feda63fc1f8e,kept,,,Chidi Okafor,CHIDI@EXAMPLE.COM,2026-03-05
+7095174efa49,kept,,,Bisi Johnson,bisi.j@example.com,2026-08-07
+adc63ca0224d,merged,feda63fc1f8e,,,,
+3778f391f99f,rejected,,INVALID_EMAIL,,,
+59d13bf3006d,rejected,,MISSING_REQUIRED,,,
+d5226ec85345,kept,,,Daniel Okoro,daniel.okoro@example.com,2026-08-09
+e399e581af0e,merged,282b2173766e,,,,
+282b2173766e,kept,,,Funmilayo Adeyemi,funmi@example.com,2026-04-04
+210ad862a8de,rejected,,INVALID_DATE,,,
+b05c961c581a,kept,,,Segun Ade,segun.ade@example.com,
+027de65b79a0,kept,,,"Okonkwo, Emeka",emeka@example.com,2026-05-10
+3d1401889c84,merged,d5226ec85345,,,,
+8a00da428376,kept,,,Adébáyọ̀ Ọlá,adebayo.ola@example.com,10 May 2026
+add2d8599d3f,rejected,,INVALID_EMAIL,,,
+89bb2f9e2511,kept,,,Yusuf Bello,yusuf@example.com,2026-06-02
+2174cfb1dbcf,rejected,,INVALID_EMAIL,,,
+f081ad20f13d,merged,89bb2f9e2511,,,,
+c6e48a56c415,merged,89bb2f9e2511,,,,
+3fc6be5af4d8,kept,,,Halima Sani,halima.sani@example.com,2026-06-03
+97d3f998d009,rejected,,MISSING_REQUIRED,,,
+190ab8bf8249,kept,,,Peter Obi Jr,peter.jr@example.co.uk,2026-07-01
+2e9a779fd95d,kept,,,Zainab Ali,zainab@example.com,2026-06-30
+69320de8b106,kept,,,Femi Kuti,femi+news@example.com,2026-07-01
+a3f242375cce,kept,,,Esther Ojo,esther.ojo@example.com,2026-09-30
