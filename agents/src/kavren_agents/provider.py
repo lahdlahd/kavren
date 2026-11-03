@@ -169,7 +169,10 @@ def main() -> None:
     from .common import AgentChain, ApiClient, load_env_file
     from .planner import DEFAULT_MODEL, NearAIPlanner
 
+    from kavren_api.chain import quiet_rpc_race_noise
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    quiet_rpc_race_noise()
     env = {**load_env_file(os.environ.get("PROVIDER_KEY_FILE", "~/.kavren/provider-agent.env")),
            **load_env_file(os.environ.get("NEAR_AI_KEY_FILE", "~/.kavren/near-ai.env")), **os.environ}
     acct, key = env["PROVIDER_ACCOUNT_ID"], env["PROVIDER_FC_PRIVATE_KEY"]

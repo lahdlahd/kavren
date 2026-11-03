@@ -102,9 +102,9 @@ def test_agent_hires_without_any_human_step_and_verifies_before_accepting(world)
     # the canary set is served once the job is final; the buyer checks it against the on-chain commitment
     ev = w["agent"].tick()
     assert ev[0]["action"] == "accepted" and all(ev[0]["checks"].values())
-    receipt = json.loads((w["agent"].outbox / "leads-for-outreach.receipt.json").read_text())
+    receipt = json.loads((w["agent"].outbox / "job0-leads-for-outreach.receipt.json").read_text())
     assert receipt["result"] == "passed"
-    cleaned = (w["agent"].outbox / "leads-for-outreach.cleaned.csv").read_text()
+    cleaned = (w["agent"].outbox / "job0-leads-for-outreach.cleaned.csv").read_text()
     assert cleaned.startswith("full_name,email,signup_date\n") and "amaka.obi@example.com" in cleaned
     assert w["agent"].tick() == []  # done; nothing repeats
     assert w["svc"].reveal_finished()[0]["job_id"] == hired["job_id"]  # evaluator also opens it on-chain
@@ -125,7 +125,7 @@ def test_agent_catches_a_lying_evaluator(world):
     ev = w["agent"].tick()
     assert ev[0]["action"] == "verification_failed"
     assert ev[0]["checks"]["independent_verdict_is_pass"] is False
-    assert not (w["agent"].outbox / "x.cleaned.csv").exists()
+    assert not list(w["agent"].outbox.glob("*.cleaned.csv"))
 
 
 def test_agent_refunds_after_deadline(world):
@@ -311,3 +311,30 @@ def test_adoption_ignores_other_agents_and_finished_jobs(world):
                            w["agent"].inbox, w["agent"].outbox, w["clock"])
     restarted.state["jobs"].clear()
     assert restarted.reconcile() == []
+
+
+def test_same_filename_twice_gives_separate_outputs(world):
+    w = world
+    for _ in range(2):
+        (w["agent"].inbox / "leads.csv").write_bytes(INPUT)
+        w["agent"].tick()
+    assert set(w["agent"].state["jobs"]) == {"0", "1"}
+    w["clock"].t += 3700
+    w["agent"].tick()
+    assert (w["agent"].outbox / "job0-leads.receipt.json").exists()
+    assert (w["agent"].outbox / "job1-leads.receipt.json").exists()
+
+
+def test_rpc_race_noise_is_dropped_but_real_errors_are_kept():
+    import logging
+    from kavren_api.chain import _RpcRaceFilter
+    f = _RpcRaceFilter()
+
+    def rec(msg, exc):
+        return logging.LogRecord("asyncio", logging.ERROR, "x", 1, msg, None, (type(exc), exc, None))
+
+    class ServerDisconnectedError(Exception):
+        pass
+    assert f.filter(rec("Task exception was never retrieved", ServerDisconnectedError("Server disconnected"))) is False
+    assert f.filter(rec("Task exception was never retrieved", ValueError("real bug"))) is True
+    assert f.filter(rec("something else broke", ServerDisconnectedError("x"))) is True

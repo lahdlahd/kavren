@@ -3,6 +3,7 @@ with its FUNCTION-CALL key (py-near). A Fake implementation lives in the tests."
 from __future__ import annotations
 
 import base64
+import logging
 import json
 from typing import Optional, Protocol
 
@@ -122,3 +123,22 @@ class NearChain:
 
     def reveal_canaries(self, job_id: int, blob: bytes) -> str:
         return self._call("reveal_canaries", {"job_id": job_id, "blob": base64.b64encode(blob).decode()})
+
+
+class _RpcRaceFilter(logging.Filter):
+    """py-near sends each request to several RPC servers at once and keeps the first
+    answer. When a slower server then drops its connection, asyncio logs 'Task exception
+    was never retrieved' with a full traceback, although the request already succeeded.
+    Drop only that case; every other asyncio error still shows."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "Task exception was never retrieved" not in record.getMessage():
+            return True
+        exc = record.exc_info[1] if record.exc_info else None
+        text = repr(exc)
+        return not any(k in text for k in ("ServerDisconnected", "ClientConnector", "ClientOSError", "ServerTimeout"))
+
+
+def quiet_rpc_race_noise() -> None:
+    logging.getLogger("asyncio").addFilter(_RpcRaceFilter())
+

@@ -147,7 +147,7 @@ class BuyerAgent:
             for j in self._provider_jobs(prov):
                 if (j["buyer_agent"] == self.account_id and j["owner_id"] == self.owner_id
                         and str(j["job_id"]) not in self.state["jobs"] and j["status"] in ("Open", "Submitted")):
-                    self._track(j["job_id"], f"adopted-job-{j['job_id']}.csv", j["draft_id"], j["amount"], adopted=True)
+                    self._track(j["job_id"], "adopted.csv", j["draft_id"], j["amount"], adopted=True)
                     self._register(j["job_id"])
                     out.append({"job_id": j["job_id"], "action": "adopted", "status": j["status"]})
         return out
@@ -224,7 +224,7 @@ class BuyerAgent:
             return self._refund(job_id, st, "evaluator did not answer in time")
         if j["status"] == "Refunded":
             st["done"] = True
-            self._receipt(Path(st["file"]).stem, {"job_id": job_id, "result": "refunded", "job": _summ(j)})
+            self._receipt(_out(job_id, st), {"job_id": job_id, "result": "refunded", "job": _summ(j)})
             return {"job_id": job_id, "action": "closed", "result": "refunded"}
         if j["status"] == "Passed":
             return self._accept(job_id, st, j)
@@ -233,7 +233,7 @@ class BuyerAgent:
     def _refund(self, job_id: int, st: dict, why: str) -> dict:
         res = self.chain.call("refund_job", {"job_id": job_id})
         st.update(status="Refunded", refund_tx=res["tx"], done=True)
-        self._receipt(Path(st["file"]).stem, {"job_id": job_id, "result": "refunded", "reason": why, "tx": res["tx"]})
+        self._receipt(_out(job_id, st), {"job_id": job_id, "result": "refunded", "reason": why, "tx": res["tx"]})
         return {"job_id": job_id, "action": "refunded", "reason": why, "tx": res["tx"]}
 
     def _accept(self, job_id: int, st: dict, j: dict) -> Optional[dict]:
@@ -254,7 +254,7 @@ class BuyerAgent:
         checks["report_hash_matches_chain"] = bool(ev) and ev.report_hash == passed["report_hash"]
         deliverable = self.api.request("GET", f"/jobs/{job_id}/deliverable")
         ok = all(checks.values()) and deliverable.status_code == 200
-        stem = Path(st["file"]).stem
+        stem = _out(job_id, st)
         if ok:
             (self.outbox / f"{stem}.cleaned.csv").write_bytes(deliverable.content)
         st.update(done=True, verified=ok)
@@ -278,6 +278,11 @@ class BuyerAgent:
         tmp.replace(self.state_path)  # atomic: a crash never leaves a half-written state file
 
 
+def _out(job_id: int, st: dict) -> str:
+    """Outputs are named by job, so two jobs from files with the same name never overwrite each other."""
+    return f"job{job_id}-{Path(st['file']).stem}"
+
+
 def _summ(j: dict) -> dict:
     return {k: j[k] for k in ("job_id", "status", "provider_id", "amount", "work_hash", "canary_commitment",
                               "attempts_used", "verdicts")}
@@ -286,7 +291,10 @@ def _summ(j: dict) -> dict:
 def main() -> None:
     from .common import AgentChain, ApiClient, load_env_file
 
+    from kavren_api.chain import quiet_rpc_race_noise
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    quiet_rpc_race_noise()
     env = {**load_env_file(os.environ.get("BUYER_KEY_FILE", "~/.kavren/buyer-agent.env")), **os.environ}
     acct, key = env["BUYER_AGENT_ACCOUNT_ID"], env["BUYER_AGENT_FC_PRIVATE_KEY"]
     chain = AgentChain(env.get("NEAR_RPC_URL", ""), env["KAVREN_CONTRACT_ID"], acct, key)

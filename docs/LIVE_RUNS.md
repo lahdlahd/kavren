@@ -30,7 +30,7 @@ Real transactions, newest first. Every link opens on the public testnet explorer
 - The buyer created **job 1**. Its `register` call got 404 ("no such job") because the API's read had not caught up. The tick failed before the agent saved its state or moved the file, so on the next tick it hired again (**job 2**). The owner's on-chain policy (`max_open_jobs = 2`) stopped a third hire.
 - The provider submitted job 1's hash on-chain. Its upload got 409 because the API still saw the job as Open, and the file was not kept, so the evaluator had nothing to judge.
 
-**What protected the funds.** Neither job could be paid without an evaluator PASS, and the contract lets anyone refund a job once its timer runs out. Job 1 is the real test of the evaluator-timeout refund path.
+**What protected the funds.** Neither job could be paid without an evaluator PASS, and the contract lets anyone refund a job once its timer runs out. Job 1 became the live test of the evaluator-timeout refund path (see below).
 
 **Fix** (commit after `253d1cf`):
 - Chain reads use `optimistic` finality. The contract still re-checks every write.
@@ -39,3 +39,16 @@ Real transactions, newest first. Every link opens on the public testnet explorer
 - On restart the buyer adopts any live job it created that its state file does not know about.
 - The provider writes each submission to disk before `submit_work` and re-uploads it while the job is Submitted with a matching hash.
 - Regression tests cover each step, using a lagging chain view.
+
+**After the fix (restart at 22:31 WAT).** In its first ticks the buyer adopted jobs 1 and 2 on its own. Every `register` and upload then succeeded on the first try.
+
+| Job | What happened | Transaction |
+|---|---|---|
+| 1 | No file was ever stored, so no verdict could be given. When the 30-minute evaluation window ran out, the buyer agent called `refund_job` and 0.24 NEAR went back to the owner's budget: **the evaluator-timeout refund path, live** | [2YQQNdfm…t4x3](https://testnet.nearblocks.io/txns/2YQQNdfmdZdFXL72f5jR4N6KL9ouP1qF93hcR1tot4x3) |
+| 2 | Provider re-planned, submitted and uploaded; PASS; buyer re-verified it independently | — |
+| 3 | Hired from the duplicate file still in the inbox, once job 1's refund freed a slot under `max_open_jobs`; PASS, re-verified | [C5fJm55A…tfVN](https://testnet.nearblocks.io/txns/C5fJm55AFdbspQNDcf3Hdr9zgMGZixNqe2icVqnZtfVN) (create) |
+| 4 | A further copy of the file put in the inbox; PASS, canaries revealed, provider withdrew 0.24 NEAR | [GbMZDXZs…DDhf](https://testnet.nearblocks.io/txns/GbMZDXZsdRaU8vARW1qSbXWY1TVPoH3CCMyWAcKZDDhf) (create) · [ByvW8wY7…WjHm](https://testnet.nearblocks.io/txns/ByvW8wY7wV1QjAFPo6vmUHCCyFFdVS1tyi2hDh2UWjHm) (PASS) · [HFk3RqZP…zGQ9](https://testnet.nearblocks.io/txns/HFk3RqZPmX4oNi5tsDLQaBZzkEKMqqXk21z7DW32zGQ9) (reveal) · [EBpMFcUq…xajM](https://testnet.nearblocks.io/txns/EBpMFcUq7A3UaxdrgrLij4dkoyFssxnr1HmHnY2hxajM) (withdraw) |
+
+**Totals across jobs 0–4:** 1.20 NEAR escrowed. 0.24 NEAR was refunded to the budget and 0.96 NEAR was paid to the provider for four verified PASSes. Nothing is stuck.
+
+Because jobs 0, 3 and 4 came from the same file name, their receipts overwrote each other in the outbox. That has been fixed: outputs are now named `job<N>-<file>`.

@@ -28,6 +28,8 @@ def run_once(svc: Service) -> dict:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    from .chain import quiet_rpc_race_noise
+    quiet_rpc_race_noise()
     s = Settings.from_env()
     svc = Service(s, make_engine(s.database_url), LocalStorage(s.storage_dir),
                   NearChain(s.rpc_url, s.contract_id, s.evaluator_account_id, s.evaluator_fc_private_key))
