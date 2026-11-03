@@ -181,19 +181,53 @@ def test_empty_reply_from_reasoning_model_is_an_error():
         extract_json(None)
 
 
-def test_near_ai_planner_request_shape():
-    seen = {}
+def _sse(*chunks):
+    return "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+
+def test_near_ai_planner_streams_and_drops_unsupported_reasoning_effort():
+    from kavren_core.templates import get_template
+    seen = []
 
     def handler(req: httpx.Request):
-        seen["body"] = json.loads(req.content)
-        seen["auth"] = req.headers["authorization"]
-        return httpx.Response(200, json={"choices": [{"message": {"content": '{"rejects":[],"merges":[]}'}}],
-                                         "usage": {"total_tokens": 5}})
+        body = json.loads(req.content)
+        seen.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(400, json={"error": "unknown field reasoning_effort"})
+        return httpx.Response(200, text=_sse(
+            {"choices": [{"delta": {"reasoning_content": "hmm"}}]},
+            {"choices": [{"delta": {"content": '{"rejects":[],'}}]},
+            {"choices": [{"delta": {"content": '"merges":[]}'}}]},
+            {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 3}}),
+            headers={"content-type": "text/event-stream"})
 
+    pl = NearAIPlanner("k", http=httpx.Client(transport=httpx.MockTransport(handler), base_url="https://x/v1"))
+    ticks = []
+    plan, usage = pl.plan(get_template("contacts-v1").build_spec(), "record_id,full_name,email,signup_date\nab,A,a@b.co,\n",
+                          on_progress=lambda: ticks.append(1))
+    assert plan == {"rejects": [], "merges": []} and usage["completion_tokens"] == 3
+    assert seen[0]["reasoning_effort"] == "low" and "reasoning_effort" not in seen[1]
+    assert seen[1]["model"] == "deepseek-ai/DeepSeek-V4.1-Flash-1017" and seen[1]["stream"] is True
+    assert pl.reasoning_effort is None and ticks
+
+
+def test_reasoning_only_reply_is_a_failed_attempt():
     from kavren_core.templates import get_template
-    pl = NearAIPlanner("k", http=httpx.Client(transport=httpx.MockTransport(handler), base_url="https://x/v1",
-                                                headers={"Authorization": "Bearer k"}))
-    plan, usage = pl.plan(get_template("contacts-v1").build_spec(), "record_id,full_name\n")
-    assert plan == {"rejects": [], "merges": []} and usage["total_tokens"] == 5
-    assert seen["body"]["model"] == "deepseek-ai/DeepSeek-V4.1-Flash-1017"
-    assert seen["body"]["max_tokens"] >= 4000 and seen["auth"] == "Bearer k"
+
+    def handler(req):
+        return httpx.Response(200, text=_sse({"choices": [{"delta": {"reasoning_content": "thinking..."}}]}),
+                              headers={"content-type": "text/event-stream"})
+
+    pl = NearAIPlanner("k", http=httpx.Client(transport=httpx.MockTransport(handler), base_url="https://x/v1"))
+    with pytest.raises(ValueError):
+        pl.plan(get_template("contacts-v1").build_spec(), "record_id,full_name,email,signup_date\n")
+
+
+def test_facts_table_reports_tool_computed_facts():
+    from kavren_agents.planner import facts_table
+    from kavren_core.templates import get_template
+    spec = get_template("contacts-v1").build_spec()
+    t = facts_table(spec, "record_id,full_name,email,signup_date\nr1,  Ada  ,ADA@X.CO ,31/02/2026\nr2,,bad@x,\n")
+    lines = t.splitlines()
+    assert lines[1].startswith("r1|ada@x.co|-|true|false|")
+    assert lines[2].startswith("r2|bad@x|full_name|false|-|")

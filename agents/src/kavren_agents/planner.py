@@ -28,6 +28,9 @@ You do NOT rewrite values: deterministic tools will trim and collapse whitespace
 emails, and reformat dates. You only decide, per record, whether to REJECT it (with a reason code), MERGE it
 into another record (a duplicate), or KEEP it (the default; do not list kept records).
 
+Each record comes with FACTS computed by deterministic tools: its normalised dedupe key, which required
+columns are missing, whether its email is valid, whether its date parses. Use them; you decide.
+
 Rules you are judged on (they are checked against the original data, so false claims fail):
 - Reject with MISSING_REQUIRED only if a required column is empty (after trimming) and the record has no
   duplicate you could merge it into instead.
@@ -45,11 +48,37 @@ Answer with ONE JSON object and nothing else:
  "notes":"one short sentence"}"""
 
 
+def facts_table(spec: Spec, work_csv: str) -> str:
+    """Deterministic FACTS per record (computed by tools, not by the model): normalised key,
+    email validity, date parse result, missing required columns. The model makes the decisions."""
+    import csv as _csv
+    import io as _io
+
+    from kavren_core import formats as f
+    from kavren_core.evaluator import input_key
+
+    rows = list(_csv.reader(_io.StringIO(work_csv)))
+    hdr, out = rows[0], ["record_id|dedupe_key|missing_required|email_ok|date_ok|values"]
+    for r in rows[1:]:
+        rec = dict(zip(hdr[1:], r[1:]))
+        k = input_key(spec, rec)
+        miss = [c.name for c in spec.columns if c.required and not rec[c.name].strip()]
+        emails = [f.is_valid_email(f.norm_email(rec[c.name])) for c in spec.columns
+                  if c.type == "email" and rec[c.name].strip()]
+        dates = [f.parse_input_date(rec[c.name], spec.date_rules.input_formats) is not None
+                 for c in spec.columns if c.type == "date" and rec[c.name].strip()]
+        out.append("|".join([r[0], "/".join(k) if k else "-", ",".join(miss) or "-",
+                             "-" if not emails else str(all(emails)).lower(),
+                             "-" if not dates else str(all(dates)).lower(), json.dumps(rec, ensure_ascii=False)]))
+    return "\n".join(out)
+
+
 def _user_prompt(spec: Spec, work_csv: str, feedback: Optional[list[dict]]) -> str:
     cols = ", ".join(f"{c.name} ({c.type}{', required' if c.required else ''})" for c in spec.columns)
     msg = (f"Template: {spec.template_id}\nColumns: {cols}\nDedupe key: {', '.join(spec.dedupe_key)}\n"
-           f"Allowed input date formats: {', '.join(spec.date_rules.input_formats)}\n"
-           f"Max rejected share: {spec.max_reject_pct}%\n\nWork file (CSV):\n{work_csv}")
+           f"Max rejected share: {spec.max_reject_pct}%\n\n"
+           "Records with FACTS computed by deterministic tools (trust them; '-' means not applicable):\n"
+           f"{facts_table(spec, work_csv)}")
     if feedback:
         msg += ("\n\nYour previous plan was checked and FAILED with these violations "
                 "(check, code, record_id). Fix them and return a complete new plan:\n"
@@ -70,18 +99,56 @@ def extract_json(text: str) -> dict:
 
 
 class NearAIPlanner:
-    def __init__(self, api_key: str, base_url: str = "https://cloud-api.near.ai/v1", model: str = DEFAULT_MODEL,
-                 max_tokens: int = 12000, http: Optional[httpx.Client] = None):
-        self.model, self.max_tokens = model, max_tokens
-        self.http = http or httpx.Client(base_url=base_url, timeout=180,
-                                         headers={"Authorization": f"Bearer {api_key}"})
+    """Streams the reply so a slow 'thinking' model never hits a whole-request timeout.
+    A request fails only if the server is silent for `idle_timeout` seconds, or the whole
+    answer takes longer than `total_timeout`."""
 
-    def plan(self, spec, work_csv, feedback=None):
-        r = self.http.post("/chat/completions", json={
-            "model": self.model, "max_tokens": self.max_tokens, "temperature": 0,
-            "messages": [{"role": "system", "content": SYSTEM},
-                         {"role": "user", "content": _user_prompt(spec, work_csv, feedback)}]})
-        r.raise_for_status()
-        d = r.json()
-        content = d["choices"][0]["message"].get("content")
-        return extract_json(content), d.get("usage", {})
+    def __init__(self, api_key: str, base_url: str = "https://cloud-api.near.ai/v1", model: str = DEFAULT_MODEL,
+                 max_tokens: int = 8000, http: Optional[httpx.Client] = None,
+                 idle_timeout: float = 120, total_timeout: float = 600):
+        self.model, self.max_tokens, self.total_timeout = model, max_tokens, total_timeout
+        self.http = http or httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {api_key}"},
+                                         timeout=httpx.Timeout(30, read=idle_timeout))
+        self.reasoning_effort: Optional[str] = "low"  # dropped automatically if the server rejects it
+
+    def _body(self, spec, work_csv, feedback):
+        b = {"model": self.model, "max_tokens": self.max_tokens, "temperature": 0, "stream": True,
+             "stream_options": {"include_usage": True},
+             "messages": [{"role": "system", "content": SYSTEM},
+                          {"role": "user", "content": _user_prompt(spec, work_csv, feedback)}]}
+        if self.reasoning_effort:
+            b["reasoning_effort"] = self.reasoning_effort
+        return b
+
+    def plan(self, spec, work_csv, feedback=None, on_progress=None):
+        import time as _t
+        for _ in range(2):
+            content, usage, start = [], {}, _t.time()
+            with self.http.stream("POST", "/chat/completions", json=self._body(spec, work_csv, feedback)) as r:
+                if r.status_code == 400 and self.reasoning_effort:
+                    r.read()
+                    self.reasoning_effort = None  # server does not accept it; retry plainly
+                    continue
+                if r.status_code != 200:
+                    r.read()
+                    raise httpx.HTTPStatusError(f"NEAR AI returned {r.status_code}: {r.text[:300]}",
+                                                request=r.request, response=r)
+                for line in r.iter_lines():
+                    if _t.time() - start > self.total_timeout:
+                        raise TimeoutError("model answer took too long")
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    if chunk.get("usage"):
+                        usage = chunk["usage"]
+                    for ch in chunk.get("choices", []):
+                        piece = (ch.get("delta") or {}).get("content")
+                        if piece:
+                            content.append(piece)
+                    if on_progress:
+                        on_progress()
+            return extract_json("".join(content)), usage
+        raise RuntimeError("unreachable")

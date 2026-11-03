@@ -36,7 +36,8 @@ MIN_TIME_LEFT = 120  # don't start an attempt with less than 2 minutes to the de
 
 class ProviderAgent:
     def __init__(self, account_id: str, chain, api, planner: Planner, clock: Callable[[], float] = time.time,
-                 log_dir: Path | None = None):
+                 log_dir: Path | None = None, on_progress: Callable[[], None] | None = None):
+        self.on_progress = on_progress
         self.account_id, self.chain, self.api, self.planner, self.clock = account_id, chain, api, planner, clock
         self.usage: list[dict] = []
         self.log_dir = log_dir
@@ -93,10 +94,13 @@ class ProviderAgent:
         attempts = []
         for _ in range(LOCAL_REVISIONS + 1):
             try:
-                plan, usage = self.planner.plan(spec, work.decode("utf-8"), feedback)
+                if self.on_progress is not None:
+                    plan, usage = self.planner.plan(spec, work.decode("utf-8"), feedback, on_progress=self.on_progress)
+                else:
+                    plan, usage = self.planner.plan(spec, work.decode("utf-8"), feedback)
                 self.usage.append(usage)
                 sub = execute(spec, work, plan)
-            except (PlanError, ValueError, KeyError) as e:
+            except (PlanError, ValueError, KeyError, TimeoutError) as e:
                 feedback = [{"check": "PLAN", "code": "INVALID_PLAN", "record_id": None, "detail": str(e)[:300]}]
                 attempts.append({"ok": False, "error": str(e)[:200]})
                 continue

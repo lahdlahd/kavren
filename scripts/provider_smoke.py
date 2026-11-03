@@ -28,13 +28,27 @@ planner = NearAIPlanner(env["NEAR_AI_API_KEY"], env.get("NEAR_AI_BASE_URL", "htt
 spec = load_spec((FX / "spec.json").read_bytes())
 work = (FX / "work.csv").read_bytes()
 
-agent = ProviderAgent("smoke", None, None, planner)
+import sys
+
+_n = [0]
+
+
+def dot():
+    _n[0] += 1
+    if _n[0] % 25 == 0:
+        sys.stderr.write(".")
+        sys.stderr.flush()
+
+
+sys.stderr.write("thinking (one dot per ~25 streamed chunks) ")
+agent = ProviderAgent("smoke", None, None, planner, on_progress=dot)
 t0 = time.time()
 sub, attempts = agent._plan_until_clean(spec, work, None)
 secs = time.time() - t0
+sys.stderr.write("\n")
 tin = sum(u.get("prompt_tokens", 0) for u in agent.usage)
 tout = sum(u.get("completion_tokens", 0) for u in agent.usage)
-result = {"model": planner.model, "llm_calls": len(agent.usage), "local_attempts": attempts, "seconds": round(secs, 1),
+result = {"model": planner.model, "reasoning_effort_accepted": planner.reasoning_effort is not None, "llm_calls": len(agent.usage), "local_attempts": attempts, "seconds": round(secs, 1),
           "prompt_tokens": tin, "completion_tokens": tout,
           "cost_usd": round(tin * PRICE_IN + tout * PRICE_OUT, 5)}
 if sub is None:
