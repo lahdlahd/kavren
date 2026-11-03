@@ -9,6 +9,9 @@ description = "KAVREN deterministic core: spec schema, canonical JSON, templates
 requires-python = ">=3.11"
 dependencies = ["pydantic==2.13.5"]
 
+[project.scripts]
+kavren = "kavren_core.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest==9.2.0"]
 

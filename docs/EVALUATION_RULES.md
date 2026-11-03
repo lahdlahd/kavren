@@ -85,10 +85,18 @@ The deliverable for the buyer removes canary rows.
 
 ## 6. Report
 
-The report is canonical JSON: `{evaluator_version, spec_hash, work_hash, output_hash, verdict, checks:[{check, passed, violations:[{code, record_id}]}], canary_failures: int}`.
+The report is canonical JSON:
+
+```json
+{"evaluator_version", "spec_hash", "work_hash", "output_hash", "canary_commitment",
+ "verdict": "PASS|FAIL",
+ "checks": [{"check": "C1".."H1", "status": "pass|fail|skipped", "violations": [{"code", "record_id"}]}],
+ "canary_failures": int}
+```
 
 - **No cell values and no timestamps** appear in it.
-- In the report for an unfinished job, H1 `violations` is always empty and only `canary_failures` is given.
+- H1 `violations` is **always** empty; only `canary_failures` is given, so the report never identifies canaries, before or after the job ends. The detailed canary result is available to `kavren verify` after the reveal.
+- Violations are sorted by code, then by work-file order.
 - `report_hash = sha256(report bytes)`.
 
 **Violation codes:**

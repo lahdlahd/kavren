@@ -19,6 +19,12 @@ jobs:
       - run: pip install -e 'kavren_core[test]'
       - name: kavren_core tests (rules, spec, hand-checked answer key)
         run: cd kavren_core && pytest -q
+      - name: kavren verify reproduces every fixture verdict
+        run: |
+          for s in pass fail_empty fail_deletion fail_fabricated fail_false_reject fail_fake_merge fail_format fail_canary_dup fail_canary_date; do
+            kavren verify fixtures/contacts --submission "$s" > /dev/null
+          done
+          kavren verify fixtures/contacts --submission pass
       - name: fixtures rebuild byte-identically
         run: |
           python3 fixtures/build_fixtures.py > /dev/null
