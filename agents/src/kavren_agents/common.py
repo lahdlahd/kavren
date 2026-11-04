@@ -74,6 +74,22 @@ class ApiClient:
         return self.http.request(method, url, **kw)
 
 
+def _describe(e: Exception) -> str:
+    """py-near's RPC exceptions have an empty str(); the useful part (e.g. the contract's
+    panic message or MethodNameMismatch) is in the class name, error_json and attributes."""
+    extra = getattr(e, "error_json", None) or {k: v for k, v in vars(e).items() if not k.startswith("_")}
+    return f"{type(e).__name__}: {e} {json.dumps(extra, default=str)}"[:2000]
+
+
+class ChainCallError(RuntimeError):
+    """A contract call that did not succeed. `tx` is the transaction hash when the
+    transaction reached the chain (a contract panic is recorded on-chain and costs gas)."""
+
+    def __init__(self, method: str, detail: str, tx: Optional[str]):
+        super().__init__(f"{method} failed: {detail[:1500]}")
+        self.method, self.detail, self.tx = method, detail, tx
+
+
 class AgentChain:
     """Views over RPC; writes signed with the agent's FUNCTION-CALL key (no deposit possible)."""
 
@@ -95,11 +111,13 @@ class AgentChain:
             await acc.startup()
             try:
                 r = await acc.function_call(self.contract_id, method, args, gas=self.GAS, amount=0)
+            except Exception as e:  # py-near raises for most contract panics; keep the tx hash
+                raise ChainCallError(method, _describe(e), getattr(e, "trx_hash", None)) from e
             finally:
                 await acc.shutdown()
             status = getattr(r, "status", {})
             if not (isinstance(status, dict) and "SuccessValue" in status):
-                raise RuntimeError(f"{method} failed: {json.dumps(status)[:400]}")
+                raise ChainCallError(method, json.dumps(status), r.transaction.hash)
             raw = base64.b64decode(status["SuccessValue"] or "")
             return {"tx": r.transaction.hash, "value": json.loads(raw) if raw else None}
 

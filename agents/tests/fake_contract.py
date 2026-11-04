@@ -86,12 +86,24 @@ class FakeContract:
 
     def _m_submit_work(self, caller, job_id, output_hash):
         j = self.jobs[job_id]
-        if caller != j["provider_id"] or j["status"] != "Open" or self.now() >= j["deadline"] \
-                or j["attempts_used"] >= j["max_attempts"]:
-            raise Reject("submit not allowed")
+        # same checks, same order and same messages as contract/src/lib.rs
+        if caller != j["provider_id"]:
+            raise Reject("only the job's provider")
+        if j["status"] != "Open":
+            raise Reject("job not open")
+        if self.now() >= j["deadline"]:
+            raise Reject("deadline passed")
+        if j["attempts_used"] >= j["max_attempts"]:
+            raise Reject("no attempts left")
         j.update(submission_seq=j["submission_seq"] + 1, current_output_hash=output_hash,
                  submitted_at=self.now(), status="Submitted")
         return j["submission_seq"]
+
+    def _m_withdraw_budget(self, caller, agent_id, amount, deposit=0):
+        # owner-only and #[payable] with assert_one_yocto(): a function-call key cannot attach it
+        if deposit != 1:
+            raise Reject("Requires attached deposit of exactly 1 yoctoNEAR")
+        raise Reject("only the owner")
 
     def _m_withdraw(self, caller):
         amt = self.claimable.pop(caller, 0)
@@ -101,9 +113,16 @@ class FakeContract:
 
     def _m_submit_verdict(self, caller, job_id, seq, output_hash, verdict, report_hash):
         j = self.jobs[job_id]
-        if caller != j["evaluator_id"] or j["status"] != "Submitted" or seq != j["submission_seq"] \
-                or output_hash != j["current_output_hash"] or self.now() >= j["submitted_at"] + j["eval_window_secs"]:
-            raise Reject("verdict not allowed")
+        if caller != j["evaluator_id"]:
+            raise Reject("only the job's evaluator")
+        if j["status"] != "Submitted":
+            raise Reject("no submission awaiting a verdict")
+        if seq != j["submission_seq"]:
+            raise Reject("stale or unknown submission seq")
+        if output_hash != j["current_output_hash"]:
+            raise Reject("output_hash does not match current submission")
+        if self.now() >= j["submitted_at"] + j["eval_window_secs"]:
+            raise Reject("evaluation window closed")
         j["verdicts"].append({"seq": seq, "verdict": verdict, "output_hash": output_hash, "report_hash": report_hash, "at": self.now()})
         if verdict == "PASS":
             j["status"] = "Passed"
@@ -151,11 +170,15 @@ class FakeContract:
 class AgentChainFake:
     """Same interface as kavren_agents.common.AgentChain, bound to one caller."""
 
-    def __init__(self, contract: FakeContract, account_id: str):
-        self.c, self.account_id = contract, account_id
+    def __init__(self, contract: FakeContract, account_id: str, methods: list[str] | None = None):
+        # `methods`: the function-call key's allowlist (None = unrestricted, as in older tests)
+        self.c, self.account_id, self.methods = contract, account_id, methods
 
     def view(self, method, args):
         return self.c.view(method, args)
 
     def call(self, method, args):
+        if self.methods is not None and method not in self.methods:
+            # what the NEAR runtime answers before execution; no transaction is recorded
+            raise Reject(f"InvalidTxError: InvalidAccessKeyError: MethodNameMismatch {{method_name: {method}}}")
         return {"tx": self.c._tx(), "value": self.c.call_as(self.account_id, method, args)}
