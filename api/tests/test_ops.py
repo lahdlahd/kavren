@@ -113,3 +113,14 @@ def test_public_routes_never_return_private_content(env):
         body = c.get(url(p, job_id=jid, draft_id=draft["draft_id"])).text.lower()
         for s in secrets:
             assert s.lower() not in body, (p, s)
+
+
+def test_cors_lets_the_web_ui_read_public_routes_only_with_get(env):
+    _, _, _, c = env
+    r = c.get("/health", headers={"Origin": "http://localhost:3000"})
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert "access-control-allow-credentials" not in r.headers
+    r = c.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in r.headers
+    pre = c.options("/drafts", headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST"})
+    assert pre.status_code == 400  # browsers can't POST cross-origin

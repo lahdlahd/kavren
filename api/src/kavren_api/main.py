@@ -35,6 +35,14 @@ def create_app(service: Optional[Service] = None) -> FastAPI:
                           NearChain(s.rpc_url, s.contract_id, s.evaluator_account_id, s.evaluator_fc_private_key))
     app = FastAPI(title="KAVREN API", version="0.1.0")
     app.state.svc = service
+    # The public web UI fetches the canary opening of a finished job from the browser.
+    # Only GET, no cookies or credentials; private routes still need a bearer token.
+    import os
+
+    from fastapi.middleware.cors import CORSMiddleware
+    origins = [o.strip() for o in os.environ.get(
+        "WEB_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET"], allow_credentials=False)
 
     @app.exception_handler(ApiError)
     async def _err(_: Request, e: ApiError):
