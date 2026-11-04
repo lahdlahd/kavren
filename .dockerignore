@@ -1,0 +1,15 @@
+# Never send local state, keys or build output into the image
+.git
+**/.env*
+!web/.env.example
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+web/.next
+web/out
+web/src/generated
+data
+**/data
+contract/target
+*.bundle

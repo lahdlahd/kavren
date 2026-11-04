@@ -1,0 +1,23 @@
+# Render Blueprint: ONE paid service (Starter, about $7/month) with a 1 GB disk.
+# Render shows the plan and price before anything is created; nothing here creates
+# a database, worker or any other paid resource.
+services:
+  - type: web
+    name: kavren
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    branch: main
+    autoDeploy: false            # deploys only when you press Deploy
+    healthCheckPath: /health     # 200 only while the evaluator worker is alive
+    disk:
+      name: kavren-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: EVALUATOR_ACCOUNT_ID
+        value: evaluator.lahd-kavren.testnet
+      - key: EVALUATOR_FC_PRIVATE_KEY   # function-call key: submit_verdict + reveal_canaries only
+        sync: false                     # entered by you in the dashboard, never stored in Git
+      - key: AUTH_RECIPIENT
+        value: kavren-api

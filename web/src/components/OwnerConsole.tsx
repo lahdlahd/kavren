@@ -21,7 +21,7 @@ export function OwnerConsole() {
   const [budget, setBudget] = useState<Budget | null | undefined>(undefined);
   const [config, setConfig] = useState<Config | null>(null);
   const [form, setForm] = useState<PolicyForm>(EMPTY_FORM);
-  const [fund, setFund] = useState("1");
+  const [fund, setFund] = useState("");
   const [withdraw, setWithdraw] = useState("");
   const [errors, setErrors] = useState<Partial<Record<keyof PolicyForm | "fund" | "withdraw", string>>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -181,10 +181,10 @@ export function OwnerConsole() {
         <h2 style={{ marginTop: "2rem" }}>Add funds</h2>
         <div className="field">
           <label htmlFor="fund">Amount (NEAR)</label>
-          <input id="fund" type="text" inputMode="decimal" value={fund} aria-invalid={!!errors.fund} onChange={(e) => setFund(e.target.value)} />
+          <input id="fund" type="text" inputMode="decimal" placeholder="Type an amount" value={fund} aria-invalid={!!errors.fund} onChange={(e) => setFund(e.target.value)} />
           <span className={errors.fund ? "error" : "hint"}>{errors.fund ?? "Saves the rules above at the same time. A small part pays for on-chain storage."}</span>
         </div>
-        <div className="actions"><button type="submit" disabled={!!busy}>{busy?.startsWith("Add") ? "Waiting for wallet…" : `Add ${fund || "…"} NEAR`}</button></div>
+        <div className="actions"><button type="submit" disabled={!!busy || !fund.trim()}>{busy?.startsWith("Add") ? "Waiting for wallet…" : fund.trim() ? `Add ${fund.trim()} NEAR` : "Add funds"}</button></div>
       </form>
 
       {budget && (

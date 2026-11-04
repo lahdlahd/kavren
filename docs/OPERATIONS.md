@@ -67,3 +67,12 @@ The contract accepts a verdict only before `submitted_at + 1800 s`. The worker s
 ## 5. Environment on the host (set as secrets in the dashboard, never in Git)
 
 `KAVREN_CONTRACT_ID`, `EVALUATOR_ACCOUNT_ID`, `EVALUATOR_FC_PRIVATE_KEY` (function-call key: verdict and reveal only), `DATABASE_URL=sqlite:////var/data/kavren.db`, `STORAGE_DIR=/var/data/files`, `BACKUP_DIR=/var/data/backups`, `FILE_RETENTION_DAYS=7`, `AUTH_RECIPIENT`, and optionally `NEAR_RPC_URL`. The persistent disk is mounted at `/var/data`.
+
+## 6. Deploying on Render (one service)
+
+- `render.yaml` describes the one paid service: Docker runtime, Starter plan, Frankfurt, a 1 GB disk at `/var/data`, health check `/health`, and **auto-deploy off**. Render shows the plan and price before it creates anything.
+- `Dockerfile`: builds the static site (`NEXT_PUBLIC_API_URL=same-origin`), installs `kavren_core` and the API, and starts `python -m kavren_api.supervise`. No keys are baked in. `.dockerignore` keeps `.env*` files, virtual environments, local data and bundles out of the image.
+- **The only secret is `EVALUATOR_FC_PRIVATE_KEY`.** It is a function-call key that can only call `submit_verdict` and `reveal_canaries`. You enter it in Render's dashboard; it never goes in Git or chat.
+- **Only one evaluator may run at a time.** Before the Render service starts, stop the local API and worker: two workers signing with the same key would collide on nonces, and each has its own database. After that, point the agents at the hosted API with `KAVREN_API_URL=https://<service>.onrender.com`.
+- Jobs 0–8 were evaluated by the local API, so their private files and canary sets live in the local database. Their on-chain records, verdicts and reveal flags are unaffected. To move that history to the host, restore a local backup onto the disk (section 3).
+- **Rehearsed locally:** a clean install, running exactly as configured above, served the site, the API and `/health` (worker heartbeat), sent the security headers, refused private routes (401), served no storage paths, restarted the worker 1 s after a crash, wrote a backup, and shut down cleanly on SIGTERM.
