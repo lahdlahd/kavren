@@ -55,6 +55,8 @@ Each attack is stopped at one of four layers, with different trust assumptions:
 
 **How to run it (testnet):** keep the API and the evaluator worker running, stop the provider and buyer agents, then run `BUYER_OWNER_ACCOUNT_ID=lahd-kavren.testnet .venv/bin/python scripts/attack_gallery.py`. It uses about 0.5 NEAR of testnet budget while it runs (two jobs at about 0.24 NEAR each). All of it is refunded except the per-job storage the contract keeps, plus gas. The exact figures go in `docs/ATTACKS.md`.
 
+**Re-check the report yourself (no keys needed):** `.venv/bin/python scripts/verify_attacks.py` asks NEAR RPC for every linked transaction. It confirms each one was signed by the expected agent, went to the KAVREN contract, and either succeeded or failed with the exact contract message the report quotes.
+
 ## Limitations (honest, kept current)
 
 - **The evaluator is a trusted off-chain service.** The contract binds each verdict to the exact submitted file, the exact job and the evaluator recorded on that job, but it can't prove the checks were run correctly. Anyone holding the files can re-run them with `kavren verify`. For now it reads the job's recorded hashes from `job.json`; reading them from the chain comes with the API milestone.
