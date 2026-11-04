@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { parseAttacks } from "../src/lib/attacks.mjs";
 import { findLatestJobId, makeChain, nearToYocto, yoctoToNear } from "../src/lib/near.mjs";
 import { formToPolicy, policyToForm } from "../src/lib/policy.mjs";
-import { buildTimeline, sealFor } from "../src/lib/timeline.mjs";
+import { buildTimeline, refundReason, sealFor } from "../src/lib/timeline.mjs";
 
 const JOB = {
   job_id: 7, owner_id: "lahd-kavren.testnet", buyer_agent: "buyer-agent.lahd-kavren.testnet",
@@ -86,4 +86,16 @@ test("attack report parses into 21 rows with real links", () => {
   assert.equal(a.money.paid, "0.0000");
   assert.equal(a.rows.filter((r) => r.txs.length).length, 15);
   assert.equal(a.rows[2].layer, "Access key (NEAR runtime)");
+});
+
+test("refund reason follows the contract's three refund conditions", () => {
+  assert.match(refundReason(JOB), /All 3 attempts failed/);
+  // job 1 on testnet: submitted once, never judged, refunded after the window
+  const timeout = { ...JOB, attempts_used: 0, submission_seq: 1, submitted_at: 1500, verdicts: [] };
+  assert.match(refundReason(timeout), /window closed without a verdict/);
+  const ev = buildTimeline(timeout, 9000).map((e) => e.title);
+  assert.deepEqual(ev, ["Job created by buyer-agent.lahd-kavren.testnet", "Submission 1 was never judged", "Refunded",
+    "Hidden control records revealed"]);
+  const deadline = { ...JOB, attempts_used: 1, submission_seq: 1, verdicts: JOB.verdicts.slice(0, 1) };
+  assert.match(refundReason(deadline), /deadline passed without a PASS/);
 });

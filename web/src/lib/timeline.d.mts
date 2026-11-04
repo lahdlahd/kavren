@@ -5,3 +5,4 @@ export interface TimelineEvent { when: number | null; title: string; detail: str
 export function sealFor(job: Job, now: number): Seal;
 export function buildTimeline(job: Job, now: number): TimelineEvent[];
 export function attemptsLine(job: Job): string;
+export function refundReason(job: Job): string;

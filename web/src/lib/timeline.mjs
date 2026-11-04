@@ -48,9 +48,18 @@ export function buildTimeline(job, now) {
     });
   }
   if (job.status === "Refunded") {
+    const unjudged = job.submission_seq > job.verdicts.length && job.submitted_at != null;
+    if (unjudged) {
+      ev.push({
+        when: job.submitted_at, tone: "wait",
+        title: `Submission ${job.submission_seq} was never judged`,
+        detail: `No verdict reached the contract within the ${fmtDuration(job.eval_window_secs)} evaluation window.`,
+        data: { "Submitted file hash": job.current_output_hash },
+      });
+    }
     ev.push({
       when: null, tone: "fail", title: "Refunded",
-      detail: `${near} went back to ${job.owner_id}'s budget. The provider was paid nothing.`,
+      detail: `${refundReason(job)} ${near} went back to ${job.owner_id}'s budget. The provider was paid nothing.`,
       data: {},
     });
   }
@@ -65,6 +74,14 @@ export function buildTimeline(job, now) {
     });
   }
   return ev;
+}
+
+/** Why a refunded job was refunded, from stored fields only (the contract's three refund conditions). */
+export function refundReason(job) {
+  if (job.submission_seq > job.verdicts.length && job.submitted_at != null)
+    return "The evaluator's window closed without a verdict, so the contract allowed a refund.";
+  if (job.attempts_used >= job.max_attempts) return `All ${job.max_attempts} attempts failed.`;
+  return "The deadline passed without a PASS.";
 }
 
 export function attemptsLine(job) {
