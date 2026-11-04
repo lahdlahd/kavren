@@ -79,7 +79,7 @@ test("policy form round trip and validation", () => {
 });
 
 test("attack report parses into 21 rows with real links", () => {
-  const md = readFileSync(new URL("./fixtures/ATTACKS.md", import.meta.url), "utf8");
+  const md = readFileSync(new URL("../../docs/ATTACKS.md", import.meta.url), "utf8");
   const a = parseAttacks(md);
   assert.equal(a.rows.length, 21);
   assert.equal(a.matched, 21);
