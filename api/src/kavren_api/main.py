@@ -14,6 +14,9 @@ from .service import ApiError, Service
 from .storage import LocalStorage
 
 
+WORKER_STALE_SECS = 180  # the worker beats every ~15 s; 3 minutes of silence means it is stuck or down
+
+
 class ChallengeIn(BaseModel):
     account_id: str
 
@@ -52,8 +55,18 @@ def create_app(service: Optional[Service] = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"ok": True, "contract_id": service.settings.contract_id,
-                "evaluator_id": service.settings.evaluator_account_id}
+        """Liveness of the API and of the evaluator worker (its heartbeat file)."""
+        import time as _t
+
+        from .worker import heartbeat_path
+        try:
+            age = int(_t.time()) - int(heartbeat_path(service.settings).read_text())
+        except (OSError, ValueError):
+            age = None
+        worker_ok = age is not None and age <= WORKER_STALE_SECS
+        body = {"ok": worker_ok, "api": True, "worker_ok": worker_ok, "worker_heartbeat_age_secs": age,
+                "contract_id": service.settings.contract_id, "evaluator_id": service.settings.evaluator_account_id}
+        return JSONResponse(body, status_code=200 if worker_ok else 503)
 
     @app.post("/auth/challenge")
     def auth_challenge(body: ChallengeIn):

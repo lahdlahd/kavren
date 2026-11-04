@@ -275,17 +275,27 @@ class Service:
         done = []
         with self.engine.begin() as c:
             pend = c.execute(select(submissions).where(submissions.c.state.in_(("pending", "evaluated")))).fetchall()
-        for s in pend:
-            done.append(self._process_one(s))
+        # oldest deadline first, and one failing item (e.g. an RPC error reading its job)
+        # never blocks the others: each is retried on the next pass until its safety margin
+        for s in sorted(pend, key=lambda r: (r.uploaded_at, r.job_id, r.seq)):
+            try:
+                done.append(self._process_one(s))
+            except Exception as e:  # noqa: BLE001
+                done.append({"job_id": s.job_id, "seq": s.seq, "state": s.state, "error": str(e)[:200]})
         return done
 
     def _process_one(self, s) -> dict:
         key = and_(submissions.c.job_id == s.job_id, submissions.c.seq == s.seq)
         j, d = self._job_and_draft(s.job_id)
         if j["status"] != "Submitted" or j["submission_seq"] != s.seq or j["current_output_hash"] != s.output_hash:
+            # if our verdict for this submission is already on-chain (the tx landed but the
+            # call errored), record it as sent rather than stale
+            onchain = next((v for v in j.get("verdicts", []) if v["seq"] == s.seq and v["output_hash"] == s.output_hash
+                            and s.report_hash and v["report_hash"] == s.report_hash), None)
+            state = "sent" if onchain else "stale"
             with self.engine.begin() as c:
-                c.execute(update(submissions).where(key).values(state="stale"))
-            return {"job_id": s.job_id, "seq": s.seq, "state": "stale"}
+                c.execute(update(submissions).where(key).values(state=state))
+            return {"job_id": s.job_id, "seq": s.seq, "state": state}
         deadline = j["submitted_at"] + j["eval_window_secs"] - self.settings.verdict_safety_margin_secs
         if self.now() >= deadline:
             with self.engine.begin() as c:
