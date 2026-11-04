@@ -133,4 +133,28 @@ def create_app(service: Optional[Service] = None) -> FastAPI:
     def reveal(job_id: int):
         return Response(service.get_reveal(job_id), media_type="application/json")
 
+    _mount_web(app)
     return app
+
+
+def _mount_web(app: FastAPI) -> None:
+    """Serve the static website (web/out) from this same service when WEB_DIR is set.
+    Mounted last, so every API route above wins; StaticFiles only serves files inside
+    WEB_DIR (no path traversal), and that folder holds only the built site, never
+    private data. Every response gets basic browser hardening headers."""
+    import os
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    @app.middleware("http")
+    async def _headers(request: Request, call_next):
+        resp = await call_next(request)
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        resp.headers.setdefault("X-Frame-Options", "DENY")  # the owner console must not be framed
+        return resp
+
+    web = os.environ.get("WEB_DIR")
+    if web and (Path(web) / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=web, html=True), name="web")

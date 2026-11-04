@@ -124,3 +124,41 @@ def test_cors_lets_the_web_ui_read_public_routes_only_with_get(env):
     assert "access-control-allow-origin" not in r.headers
     pre = c.options("/drafts", headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST"})
     assert pre.status_code == 400  # browsers can't POST cross-origin
+
+
+def test_website_is_served_from_the_same_service_without_exposing_storage(tmp_path, monkeypatch):
+    import random
+
+    from fastapi.testclient import TestClient
+    from kavren_api.config import Settings
+    from kavren_api.db import make_engine
+    from kavren_api.main import create_app
+    from kavren_api.service import Service
+    from kavren_api.storage import LocalStorage
+    from test_api import CONTRACT, Clock, FakeChain
+
+    web = tmp_path / "web"
+    (web / "jobs").mkdir(parents=True)
+    (web / "index.html").write_text("<h1>KAVREN home</h1>")
+    (web / "jobs" / "index.html").write_text("<h1>Jobs page</h1>")
+    (web / "404.html").write_text("not found")
+    files = tmp_path / "files"
+    (files / "drafts" / "d1").mkdir(parents=True)
+    (files / "drafts" / "d1" / "input.csv").write_text("secret@example.com")
+    monkeypatch.setenv("WEB_DIR", str(web))
+    s = Settings(database_url=f"sqlite:///{tmp_path}/db.sqlite", storage_dir=str(files), contract_id=CONTRACT,
+                 rpc_url="unused", evaluator_account_id=EVALUATOR, evaluator_fc_private_key="",
+                 auth_recipient="kavren-api", file_retention_days=7)
+    svc = Service(s, make_engine(s.database_url), LocalStorage(s.storage_dir), FakeChain(), Clock(), random.Random(1))
+    c = TestClient(create_app(svc))
+    assert "KAVREN home" in c.get("/").text
+    assert "Jobs page" in c.get("/jobs/").text
+    assert c.get("/health").headers["content-type"].startswith("application/json")  # API routes still win
+    assert c.get("/jobs/0/work").status_code == 401                                   # and keep their auth
+    for probe in ("/drafts/d1/input.csv", "/files/drafts/d1/input.csv", "/../files/drafts/d1/input.csv",
+                  "/%2e%2e/files/drafts/d1/input.csv"):
+        r = c.get(probe)
+        assert "secret@example.com" not in r.text, probe
+    r = c.get("/")
+    assert r.headers["x-frame-options"] == "DENY" and r.headers["x-content-type-options"] == "nosniff"
+    assert routes(c) == PUBLIC | AUTHED  # the mount adds no API route

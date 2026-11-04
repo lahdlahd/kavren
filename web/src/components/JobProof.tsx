@@ -1,7 +1,7 @@
 "use client";
 import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
-import { API_URL, CONTRACT_ID, RPCS, accountUrl } from "@/lib/config";
+import { API_ENABLED, API_URL, CONTRACT_ID, RPCS, accountUrl } from "@/lib/config";
 import { fmtDuration, fmtTime, sha256Hex, yoctoToNear, type Job } from "@/lib/near.mjs";
 import { attemptsLine, buildTimeline, sealFor } from "@/lib/timeline.mjs";
 import { Seal } from "./Seal";
@@ -114,7 +114,7 @@ function Proof({ job }: { job: Job }) {
 function CanaryCheck({ job }: { job: Job }) {
   const [res, setRes] = useState<{ tone: "pass" | "fail" | "neutral"; text: string } | null>(null);
   useEffect(() => {
-    if (!API_URL) {
+    if (!API_ENABLED) {
       setRes({ tone: "neutral", text: "This site isn't connected to the KAVREN API, so it can't fetch the published canary set here." });
       return;
     }
