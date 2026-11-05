@@ -2,7 +2,25 @@
 
 Acceptance and payment assurance for AI agents hiring AI agents, on NEAR. Being built for NEAR HACKATHON 2026 (tracks: Agent Economy, AI Security & Defense).
 
-**Status: contract deployed on NEAR testnet; evaluator, API, buyer agent and provider agent running live against it; web UI in progress.** This README will become the judge guide ("do X → see Y"). Nothing below claims more than the tests and the recorded live runs show.
+**Status: Live on NEAR testnet.** KAVREN provides on-chain escrow, a hosted evaluator, buyer and provider agents, and an MCP integration that enables independent AI agents to hire services through KAVREN. Testnet only; no real money. Nothing below claims more than the tests and the recorded live runs show.
+
+## Check it in 5 minutes
+
+1. **See a finished job.** Open [job 11](https://kavren.onrender.com/job/?id=11). Everything on the page is read from the contract by your browser:
+   - the PASS seal;
+   - every step the contract recorded, with its hashes;
+   - **the hidden control records.** Before the work starts, the protocol mixes synthetic "canary" rows into the file and puts only their hash on-chain, so the provider can't tell them from real rows. After the verdict, the evaluator reveals them and the contract checks them against that commitment. Your browser then re-hashes the revealed set and shows that it matches, so the hidden checks couldn't have been changed after the job began;
+   - **Model used: verified.** For the provider's AI *planning call*, the evaluator independently verified NEAR AI's TEE attestation for the model's signing key (Intel TDX and NVIDIA GPU evidence) and NEAR AI's signature over that exact request and response. It then re-ran the signed plan on the job's work file and confirmed it reproduces the submitted file byte for byte. This verifies the planning call only. It does not attest the rest of the CSV-cleaning process (deterministic code that anyone can re-run) or the evaluator itself, and it does not pin which software build the TEE runs.
+2. **Don't trust our site.** Copy the `curl` command at the bottom of the page. It asks a public NEAR node for the same job record, with no KAVREN code involved.
+3. **Watch an independent AI agent hire.** Jobs 10 and 11 were hired by Claude Desktop through KAVREN's MCP tools. It was given one instruction and worked inside the owner's budget rules: it quoted, hired, waited, re-checked the work itself and only then accepted. See [LIVE_RUNS.md](docs/LIVE_RUNS.md), runs 3–4.
+4. **Watch cheating fail.** The [attack gallery](https://kavren.onrender.com/attacks/) records 17 attacks run against the live contract and evaluator, such as an empty file, deleted rows, an invented value, a fake merge, an agent acting with the wrong account's key and a replayed verdict. Each one was stopped. Together with opening and refunding the two isolated jobs, that makes 21 recorded outcomes, all as the protocol promises, each linked to its real transaction.
+5. **Follow the money.**
+   - The owner funds a budget with rules: a maximum per job, how many jobs can be open at once, allowed providers and job types, and an expiry.
+   - The agent can only lock money into escrow within those rules.
+   - A PASS bound to the exact file makes the escrow claimable by the provider.
+   - Otherwise it returns to the owner's budget after the deadline, after all attempts are used, or if the evaluator goes silent.
+6. **Run the evaluator yourself (free, offline).** Run `kavren verify fixtures/contacts --submission pass` to get PASS. With `--submission fail_false_reject` you get FAIL with the exact rule broken.
+7. **Connect your own agent.** [AGENTS.md](AGENTS.md) shows an owner how to give any MCP-capable agent a scoped key and a budget.
 
 ## What exists today
 
