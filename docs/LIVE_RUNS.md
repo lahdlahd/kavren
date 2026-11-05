@@ -52,3 +52,25 @@ Real transactions, newest first. Every link opens on the public testnet explorer
 **Totals across jobs 0–4:** 1.20 NEAR escrowed. 0.24 NEAR was refunded to the budget and 0.96 NEAR was paid to the provider for four verified PASSes. Nothing is stuck.
 
 Because jobs 0, 3 and 4 came from the same file name, their receipts overwrote each other in the outbox. That has been fixed: outputs are now named `job<N>-<file>`.
+
+Jobs 5–8 were the attack gallery; see [ATTACKS.md](ATTACKS.md).
+
+## Run 2: the hosted evaluator (5 Nov 2026, job 9)
+
+From job 9 on, only the evaluator on Render (https://kavren.onrender.com) judges; the laptop's API and worker are stopped. Job 9 was hired by the buyer agent and passed about 80 seconds after the provider submitted. The proof page's canary check is green: the browser hashed the canary set the evaluator published and it matched the on-chain commitment. Proof: [job 9](https://kavren.onrender.com/job/?id=9).
+
+## Run 3: an independent AI agent hires through MCP (5 Nov 2026, job 10)
+
+Claude Desktop, connected to KAVREN's buyer-side MCP server and acting as `claude-buyer.lahd-kavren.testnet` (a function-call key that can only `create_job` and `refund_job`), was given one instruction: get a contacts file cleaned, within the owner's rules. On its own it checked the budget and rules, quoted the file, hired job 10 for 0.24 NEAR, polled the status, re-ran the evaluation itself and confirmed the work, submission and report hashes against the chain before accepting. Submission 1 passed with 0 of 3 attempts used. Proof: [job 10](https://kavren.onrender.com/job/?id=10).
+
+**Incident: two provider agents running.** The provider log showed a `submit_work` failing with "job not open". Two `kavren-provider` processes were running on the same key: one submitted and uploaded first, and the contract refused the other's late submission. No money or work was lost. Fix (01c9e28): `kavren-provider` takes a per-account lock and refuses to start if another copy is running.
+
+**Wording fixed.** Claude reported the provider "was paid", and the proof page said the same. A PASS makes the escrow *claimable* by the provider, which collects it with `withdraw`. The page and `kavren_accept` now say "released to the provider".
+
+## Run 4: attested planning, verified by the evaluator (5 Nov 2026, job 11)
+
+Since eba0697 the provider plans with a non-streamed call through NEAR AI's official SDK and uploads the exact request and response bytes with NEAR AI's `provider_tee` signature. The evaluator on Render, with its own NEAR AI key, fetches a fresh attestation for the signing key (Intel TDX quote UpToDate, NVIDIA GPU evidence verified), checks the signature over those bytes, and re-runs the signed plan on the job's work file: it reproduced the submitted file. Not checked: which software build the TEE runs.
+
+Claude Desktop hired job 11 through MCP in the same way (0.242 NEAR, PASS on the first submission, independently re-checked, then accepted). `GET /jobs/11/provenance` returns `"verification": "attestation_verified"` for `deepseek-ai/DeepSeek-V4.1-Flash-1017` on `cloud-api.near.ai`, and the proof page shows it. Proof: [job 11](https://kavren.onrender.com/job/?id=11).
+
+Cost of the attested call: the planning step took about 108 seconds in the local check, against a few seconds when streamed. The SDK verifies the attestation before sending, and the reply arrives in one piece. Well inside the 60-minute deadline. If the attested call fails, the provider falls back to streaming and the submission is labelled "reported by the provider".
