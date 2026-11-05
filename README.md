@@ -86,6 +86,7 @@ Each attack is stopped at one of four layers, with different trust assumptions:
 - **If the evaluator misses its 30-minute window, the buyer can refund,** so the provider carries the risk of evaluator downtime.
 - **Drafts that no honest provider could pass are refused.** If the buyer's file has more unfixable rows than the rejection cap allows, the API says so instead of creating a job nobody can pass.
 - **The API is a trusted service.** It generates the canaries and holds them until the job is final, and it stores the private files. The contract and the commitments limit what it can change after funding, but it isn't trustless.
+- **The contract can still be upgraded.** Whoever holds the full-access key of `kavren.lahd-kavren.testnet` (the project owner) could deploy new code and change any rule. It is kept during judging so bugs can be fixed, and will be removed (locking the contract permanently) after judging.
 - **Testnet only, native NEAR only.**
 
 ## Secrets
