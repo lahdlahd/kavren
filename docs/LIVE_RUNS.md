@@ -74,3 +74,18 @@ Since eba0697 the provider plans with a non-streamed call through NEAR AI's offi
 Claude Desktop hired job 11 through MCP in the same way (0.242 NEAR, PASS on the first submission, independently re-checked, then accepted). `GET /jobs/11/provenance` returns `"verification": "attestation_verified"` for `deepseek-ai/DeepSeek-V4.1-Flash-1017` on `cloud-api.near.ai`, and the proof page shows it. Proof: [job 11](https://kavren.onrender.com/job/?id=11).
 
 Cost of the attested call: the planning step took about 108 seconds in the local check, against a few seconds when streamed. The SDK verifies the attestation before sending, and the reply arrives in one piece. Well inside the 60-minute deadline. If the attested call fails, the provider falls back to streaming and the submission is labelled "reported by the provider".
+
+## Run 5: deadline refund drill (5 Nov 2026, job 12)
+
+An isolated job, opened from the buyer-agent's budget (not the MCP agent's) with a 20-minute deadline, with the provider agent stopped so no work was done (`scripts/deadline_refund_drill.py`). Result: **DEADLINE REFUND OK**.
+
+| Step | Result | Transaction |
+|---|---|---|
+| Open job 12, 0.24 NEAR into escrow | Open | [FHMu3UhW…8cws](https://testnet.nearblocks.io/txns/FHMu3UhWVuZmpsY9tbCNnphkjYUpNJn7du4n76815cws) |
+| Refund before the deadline | refused: "no refund condition holds" | [75bXMbNn…qDHi](https://testnet.nearblocks.io/txns/75bXMbNns3Z8nEC5axsvKWD4EJCDivaVrZkd3tD8qDHi) |
+| Provider submits after the deadline | refused: "deadline passed" | [Bt4buQwL…sist](https://testnet.nearblocks.io/txns/Bt4buQwLbqh49f7iJhsD6kCBiN349C6zYHxAgrXosist) |
+| Refund after the deadline | Refunded; 0.24 NEAR back in the budget | [9X52GJVz…2D19](https://testnet.nearblocks.io/txns/9X52GJVzet9KK9WtXR8sxMzqYk86bBWHgHdB7LXy2D19) |
+
+Budget 2.1410 → 2.1235 NEAR: the job's 0.24 NEAR returned, and only the 0.0175 NEAR storage fee for the job record was kept. Proof: [job 12](https://kavren.onrender.com/job/?id=12).
+
+All three refund paths have now run live: evaluator timeout (job 1), attempts exhausted (jobs 7 and 8, attack gallery) and deadline passed (job 12).
