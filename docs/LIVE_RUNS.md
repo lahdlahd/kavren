@@ -89,3 +89,18 @@ An isolated job, opened from the buyer-agent's budget (not the MCP agent's) with
 Budget 2.1410 → 2.1235 NEAR: the job's 0.24 NEAR returned, and only the 0.0175 NEAR storage fee for the job record was kept. Proof: [job 12](https://kavren.onrender.com/job/?id=12).
 
 All three refund paths have now run live: evaluator timeout (job 1), attempts exhausted (jobs 7 and 8, attack gallery) and deadline passed (job 12).
+
+## Run 6: the owner's budget rules, enforced on-chain (5 Nov 2026)
+
+`scripts/budget_rules_drill.py`: the buyer agent's function-call key made four `create_job` calls, each breaking exactly one rule of the owner's policy for `buyer-agent.lahd-kavren.testnet` (max 1 NEAR per job, provider `provider-agent.lahd-kavren.testnet`, job type `contacts-v1`). Every call also carried deliberately invalid hashes, so no job could have been created even if a rule check were missing: the contract would then have refused with a different message. Result: **ALL FOUR RULES ENFORCED ON-CHAIN**.
+
+| Rule broken | Contract's answer | Transaction |
+|---|---|---|
+| Amount above max per job (1 NEAR + 1 yocto) | refused: "amount exceeds max_per_job" | [HUTSe1Tv…9Rae](https://testnet.nearblocks.io/txns/HUTSe1TvkhAesKp6gTXhGYZTPCPM5SZZ2GGaPiAz9Rae) |
+| Provider not on the allowlist | refused: "provider not allowed by policy" | [E6Stam8o…NycY](https://testnet.nearblocks.io/txns/E6Stam8otsWDACzTB5dC5r9XkVfpbKvy4LtFCiWMNycY) |
+| Job type not on the allowlist (`leads-v1`) | refused: "template not allowed by policy" | [B2GmpQL1…2iLJ](https://testnet.nearblocks.io/txns/B2GmpQL1PWyn59p5voXo7oyntRyfJ1swYVKt3xCp2iLJ) |
+| Budget expired (the owner shortened the expiry to about 2 minutes) | refused: "budget expired" | [8TgLY4uq…Hpmm](https://testnet.nearblocks.io/txns/8TgLY4uqp9UExqGGzCTPKh5LH3txjdjqDuYNJ1UnHpmm) |
+
+The owner then restored the original policy with `update_policy` ([HZGoxz2z…Kz7R](https://testnet.nearblocks.io/txns/HZGoxz2zGgJGtMC88PThGQ2KyJM6tVUPRTSB2ErcKz7R)); the script confirmed it on-chain. The budget balance was 2.12347 NEAR before and after, with 0 open jobs: only gas was spent.
+
+Still proven by tests only, not live: a real-provider FAIL → retry → PASS loop (live, the AI provider has always passed first time), a second `withdraw` paying nothing, and the 7-day file deletion (no job has reached 7 days yet).
