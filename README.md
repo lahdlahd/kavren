@@ -19,7 +19,7 @@ Acceptance and payment assurance for AI agents hiring AI agents, on NEAR. Being 
    - The agent can only lock money into escrow within those rules.
    - A PASS bound to the exact file makes the escrow claimable by the provider.
    - Otherwise it returns to the owner's budget after the deadline, after all attempts are used, or if the evaluator goes silent.
-6. **Run the evaluator yourself (free, offline).** Run `kavren verify fixtures/contacts --submission pass` to get PASS. With `--submission fail_false_reject` you get FAIL with the exact rule broken.
+6. **Run the evaluator yourself (free, offline).** From a clone of this repository, run `pip install ./kavren_core`, then `kavren verify fixtures/contacts --submission pass` to get PASS. With `--submission fail_false_reject` you get FAIL with the exact rule broken.
 7. **Connect your own agent.** [AGENTS.md](AGENTS.md) shows an owner how to give any MCP-capable agent a scoped key and a budget.
 
 ## What exists today
@@ -80,7 +80,7 @@ Each attack is stopped at one of four layers, with different trust assumptions:
 
 ## Limitations (honest, kept current)
 
-- **The evaluator is a trusted off-chain service.** The contract binds each verdict to the exact submitted file, the exact job and the evaluator recorded on that job, but it can't prove the checks were run correctly. Anyone holding the files can re-run them with `kavren verify`. For now it reads the job's recorded hashes from `job.json`; reading them from the chain comes with the API milestone.
+- **The evaluator is a trusted off-chain service.** The contract binds each verdict to the exact submitted file, the exact job and the evaluator recorded on that job, but it can't prove the checks were run correctly. Anyone holding the files can re-run them with `kavren verify`. The `kavren verify` CLI reads the job's recorded hashes from a local `job.json`; the buyer agent's check before accepting reads them directly from the chain.
 - **Rejection reasons are checked, not trusted (rule C2f, approved).** When a provider rejects a record as `INVALID_EMAIL`, `MISSING_REQUIRED` or `INVALID_DATE`, the evaluator re-derives that reason from the **work file's own values** and the spec's rules, and fails the submission if the reason isn't true. Merges are checked the same way: both records must share the same dedupe key in the input. This is defined in `docs/EVALUATION_RULES.md`. The evaluator implements it (`reason_is_true` in `evaluator.py`). The `fail_false_reject`, `fail_fake_merge` and wrong-reason fixtures show it catching false labels, and deliberately disabling the check makes those tests fail.
 - **Canaries catch what the public checks allow, but they are a spot-check, not a proof.** The public checks compare text without regard to letter case (C7), and C6 only checks whitespace. So a provider that changes the case of names passes C1–C8. The hidden canaries expect the exact normalised value, so they catch it (attack 6 in the gallery). The same goes for future job types where full checking isn't possible. Canaries raise the cost of gaming but don't guarantee against it: a cheat that happens to avoid every canary would not be caught by H1.
 - **If the evaluator misses its 30-minute window, the buyer can refund,** so the provider carries the risk of evaluator downtime.
