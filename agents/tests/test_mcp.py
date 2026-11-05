@@ -74,6 +74,7 @@ def test_outside_agent_hires_waits_verifies_and_accepts(world):
 
     a = t.accept(jid)
     assert a["accepted"] and all(a["independent_checks"].values())
+    assert "claimable" in a["payment"] and "withdraw" in a["payment"]  # never claims the provider was paid
     assert a["rows"] > 0 and a["preview"][0] == ["full_name", "email", "signup_date"]
     assert Path(a["cleaned_file"]).read_text().startswith("full_name,email,signup_date\n")
     assert t.accept(jid)["already_accepted"] is True

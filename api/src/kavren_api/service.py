@@ -6,10 +6,12 @@ import base64
 import hashlib
 import json
 import random
+import re
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 from sqlalchemy import and_, delete, insert, select, update
 
@@ -22,7 +24,7 @@ from kavren_core.templates import get_template, select_template
 from . import nep413
 from .chain import Chain
 from .config import Settings
-from .db import challenges, drafts, jobs, sessions, submissions
+from .db import challenges, drafts, jobs, sessions, submission_provenance, submissions
 from .storage import Storage
 
 FINAL = ("Passed", "Refunded")
@@ -192,7 +194,7 @@ class Service:
             raise ApiError(403, "only the job's owner or buyer agent")
         return self._file(f"drafts/{d.draft_id}/input.csv", d)
 
-    def upload_submission(self, caller: str, job_id: int, data: bytes) -> dict:
+    def upload_submission(self, caller: str, job_id: int, data: bytes, provenance: Optional[str] = None) -> dict:
         j, d = self._job_and_draft(job_id)
         if caller != j["provider_id"]:
             raise ApiError(403, "only the job's provider")
@@ -207,12 +209,36 @@ class Service:
         self._ensure_registered(job_id, d.draft_id)
         with self.engine.begin() as c:
             existing = c.execute(select(submissions).where(and_(submissions.c.job_id == job_id, submissions.c.seq == seq))).first()
-            if existing:
-                return {"job_id": job_id, "seq": seq, "output_hash": h, "state": existing.state}
-            self.storage.put(f"jobs/{job_id}/sub-{seq}.csv", data)
-            c.execute(insert(submissions).values(job_id=job_id, seq=seq, output_hash=h, uploaded_at=self.now(),
-                                                 state="pending", tries=0))
-        return {"job_id": job_id, "seq": seq, "output_hash": h, "state": "pending"}
+            if not existing:
+                self.storage.put(f"jobs/{job_id}/sub-{seq}.csv", data)
+                c.execute(insert(submissions).values(job_id=job_id, seq=seq, output_hash=h, uploaded_at=self.now(),
+                                                     state="pending", tries=0))
+            self._record_provenance(c, job_id, seq, provenance)
+        return {"job_id": job_id, "seq": seq, "output_hash": h, "state": existing.state if existing else "pending"}
+
+    def _record_provenance(self, c, job_id: int, seq: int, raw: Optional[str]) -> None:
+        """Best effort: a malformed provenance field never blocks the file itself. First record wins."""
+        prov = parse_provenance(raw)
+        if prov is None:
+            return
+        have = c.execute(select(submission_provenance.c.seq).where(and_(
+            submission_provenance.c.job_id == job_id, submission_provenance.c.seq == seq))).first()
+        if not have:
+            c.execute(insert(submission_provenance).values(job_id=job_id, seq=seq, recorded_at=self.now(),
+                                                           provenance_json=json.dumps(prov)))
+
+    def get_provenance(self, job_id: int) -> dict:
+        """Public: which model and service the provider reports for each submission. Read from our database
+        only (no chain call). Labelled as the provider's own claim; nothing here is attestation-verified."""
+        with self.engine.begin() as c:
+            rows = c.execute(select(submission_provenance).where(submission_provenance.c.job_id == job_id)
+                             .order_by(submission_provenance.c.seq)).all()
+        out = []
+        for r in rows:
+            p = json.loads(r.provenance_json)
+            out.append({"seq": r.seq, "model": p["model"], "service": p.get("service"),
+                        "plan_calls": len(p.get("completion_ids", [])), "verification": "reported_by_provider"})
+        return {"job_id": job_id, "submissions": out}
 
     def get_report(self, caller: str, job_id: int, seq: int) -> dict:
         j, d = self._job_and_draft(job_id)
@@ -384,3 +410,33 @@ def _check_account_id(a: str) -> None:
     import re
     if not (2 <= len(a) <= 64 and re.fullmatch(r"^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$", a)):
         raise ApiError(422, "invalid NEAR account id")
+
+
+_PROV_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def parse_provenance(raw: Optional[str]) -> Optional[dict]:
+    """Validate the provider's provenance field: {model, service (https URL), completion_ids}. None if absent
+    or malformed. Only the host of the service is kept, so no path or query can carry anything else."""
+    if not raw or len(raw) > 4096:
+        return None
+    try:
+        p = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(p, dict):
+        return None
+    model, service, ids = p.get("model"), p.get("service"), p.get("completion_ids", [])
+    if not isinstance(model, str) or not _PROV_ID.match(model.replace("/", "_")):
+        return None
+    host = None
+    if service is not None:
+        if not isinstance(service, str):
+            return None
+        u = urlparse(service)
+        if u.scheme != "https" or not u.hostname or not _PROV_ID.match(u.hostname):
+            return None
+        host = u.hostname
+    if not isinstance(ids, list) or len(ids) > 20 or not all(isinstance(i, str) and _PROV_ID.match(i) for i in ids):
+        return None
+    return {"model": model, "service": host, "completion_ids": ids}

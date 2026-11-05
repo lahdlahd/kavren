@@ -1,4 +1,4 @@
-"""The provider agent: an LLM (NEAR AI Cloud, private TEE) plans; deterministic tools execute.
+"""The provider agent: an LLM (NEAR AI Cloud) plans; deterministic tools execute.
 
 Loop:
   1. find OPEN jobs assigned to this provider on-chain;
@@ -15,9 +15,11 @@ Run: kavren-provider  (reads ~/.kavren/provider-agent.env and ~/.kavren/near-ai.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Callable
@@ -45,6 +47,7 @@ class ProviderAgent:
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.account_id, self.chain, self.api, self.planner, self.clock = account_id, chain, api, planner, clock
         self.usage: list[dict] = []
+        self._plan_ids: list[str] = []
         self.log_dir = log_dir
         self.waiting: dict[int, int] = {}  # job_id -> seq we are waiting on
         self.gave_up: set[tuple[int, int]] = set()
@@ -100,21 +103,35 @@ class ProviderAgent:
         h = sha256_hex(sub)
         pending = self._pending_path(jid, h)
         pending.write_bytes(sub)
+        prov = self._provenance()
+        pending.with_suffix(".json").write_text(json.dumps(prov))
         res = self.chain.call("submit_work", {"job_id": jid, "output_hash": h})
         self.waiting[jid] = res["value"]
-        up = self._upload(jid, sub, after_write=True)
+        up = self._upload(jid, sub, after_write=True, provenance=prov)
         return {"job_id": jid, "action": "submitted", "seq": res["value"], "output_hash": h, "tx": res["tx"],
                 "uploaded": up, "local_revisions": len(local) - 1}
 
     def _pending_path(self, jid: int, h: str) -> Path:
         return self.pending_dir / f"job{jid}-{h}.csv"
 
-    def _upload(self, jid: int, sub: bytes, after_write: bool = False) -> bool:
+    def _provenance(self) -> dict:
+        """What produced this submission, as the provider reports it: the model and service the planner
+        called, and the completion ids of the plan calls behind this file. Shown as 'reported by the
+        provider' unless the evaluator can verify it independently."""
+        return {"model": getattr(self.planner, "last_served_model", None) or getattr(self.planner, "model", None),
+                "service": getattr(self.planner, "base_url", None),
+                "completion_ids": list(self._plan_ids)}
+
+    def _upload(self, jid: int, sub: bytes, after_write: bool = False, provenance: dict | None = None) -> bool:
         kw = {"files": {"file": ("submission.csv", sub, "text/csv")}}
+        if provenance and provenance.get("model"):
+            kw["data"] = {"provenance": json.dumps(provenance)}
         url = f"/jobs/{jid}/submissions"
         r = self.api.request_after_write("POST", url, **kw) if after_write else self.api.request("POST", url, **kw)
         if r.status_code == 200:
-            self._pending_path(jid, sha256_hex(sub)).unlink(missing_ok=True)
+            p = self._pending_path(jid, sha256_hex(sub))
+            p.unlink(missing_ok=True)
+            p.with_suffix(".json").unlink(missing_ok=True)
             return True
         log.warning("upload for job %s not accepted yet (%s); will retry", jid, r.status_code)
         return False
@@ -123,12 +140,15 @@ class ProviderAgent:
         p = self._pending_path(j["job_id"], j["current_output_hash"] or "")
         if not p.exists():
             return None
-        if self._upload(j["job_id"], p.read_bytes()):
+        meta = p.with_suffix(".json")
+        prov = json.loads(meta.read_text()) if meta.exists() else None
+        if self._upload(j["job_id"], p.read_bytes(), provenance=prov):
             return {"job_id": j["job_id"], "action": "uploaded_pending", "output_hash": j["current_output_hash"]}
         return None
 
     def _plan_until_clean(self, spec, work: bytes, feedback):
         attempts = []
+        self._plan_ids: list[str] = []
         for _ in range(LOCAL_REVISIONS + 1):
             try:
                 if self.on_progress is not None:
@@ -136,6 +156,9 @@ class ProviderAgent:
                 else:
                     plan, usage = self.planner.plan(spec, work.decode("utf-8"), feedback)
                 self.usage.append(usage)
+                cid = getattr(self.planner, "last_completion_id", None)
+                if cid:
+                    self._plan_ids.append(cid)
                 sub = execute(spec, work, plan)
             except (PlanError, ValueError, KeyError, TimeoutError) as e:
                 feedback = [{"check": "PLAN", "code": "INVALID_PLAN", "record_id": None, "detail": str(e)[:300]}]
@@ -165,6 +188,21 @@ class ProviderAgent:
         return fb
 
 
+def single_instance(state_dir: Path, account_id: str):
+    """Refuse to start a second provider for the same account: two copies share one key and race each
+    other's submissions (seen live on job 10). The OS releases the lock when the process exits."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    f = open(state_dir / f"{account_id}.lock", "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        return None
+    f.write(str(os.getpid()))
+    f.flush()
+    return f
+
+
 def main() -> None:
     from .common import AgentChain, ApiClient, load_env_file
     from .planner import DEFAULT_MODEL, NearAIPlanner
@@ -176,8 +214,11 @@ def main() -> None:
     env = {**load_env_file(os.environ.get("PROVIDER_KEY_FILE", "~/.kavren/provider-agent.env")),
            **load_env_file(os.environ.get("NEAR_AI_KEY_FILE", "~/.kavren/near-ai.env")), **os.environ}
     acct, key = env["PROVIDER_ACCOUNT_ID"], env["PROVIDER_FC_PRIVATE_KEY"]
+    lock = single_instance(Path.home() / ".kavren-state" / "provider", acct)
+    if lock is None:
+        sys.exit(f"another kavren-provider is already running for {acct}; stop it first (pgrep -af kavren-provider)")
     chain = AgentChain(env.get("NEAR_RPC_URL", ""), env["KAVREN_CONTRACT_ID"], acct, key)
-    api = ApiClient(env.get("KAVREN_API_URL", "http://127.0.0.1:8000"), acct, key)
+    api = ApiClient(env.get("KAVREN_API_URL", "https://kavren.onrender.com"), acct, key)
     planner = NearAIPlanner(env["NEAR_AI_API_KEY"], env.get("NEAR_AI_BASE_URL", "https://cloud-api.near.ai/v1"),
                             env.get("NEAR_AI_MODEL") or DEFAULT_MODEL)
     agent = ProviderAgent(acct, chain, api, planner)

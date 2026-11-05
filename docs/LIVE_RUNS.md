@@ -7,7 +7,7 @@ Real transactions, newest first. Every link opens on the public testnet explorer
 **Setup**
 - Contract `kavren.lahd-kavren.testnet`: wasm SHA256 `d123abb4c454b4e0814fbf86ab6944fb3a7259bdbde86957f40c454b7d911a58`, the same file CI built and tested
 - Buyer agent, provider agent and evaluator each sign only with function-call keys scoped to that contract
-- Provider LLM: `deepseek-ai/DeepSeek-V4.1-Flash-1017` on NEAR AI Cloud (`ownedBy: nearai`, attested TEE)
+- Provider LLM: `deepseek-ai/DeepSeek-V4.1-Flash-1017` on NEAR AI Cloud (`ownedBy: nearai`). NEAR AI serves it from TEE hardware, but KAVREN does not yet verify that attestation itself; since 5 Nov each submission records the model and service as *reported by the provider*
 - Input: `fixtures/contacts/input.csv`, 20 messy rows; the protocol added 8 hidden canaries
 
 **What happened.** No human acted between dropping the file into the inbox and the payment.

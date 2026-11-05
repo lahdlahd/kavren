@@ -166,7 +166,7 @@ class BuyerTools:
             return {"accepted": False, "reason": f"job is {j['status']}, not Passed"}
         st = self._adopt(j)
         if st.get("done") and st.get("verified"):
-            return self._accepted_result(job_id, st, already=True)
+            return self._accepted_result(job_id, st, j, already=True)
         ev = self.a._accept(job_id, st, j)
         self.a._save()
         if ev is None:
@@ -176,12 +176,16 @@ class BuyerTools:
             return {"accepted": False, "checks": ev["checks"],
                     "reason": "independent re-check FAILED: the PASS on-chain does not match the files. "
                               "Do not rely on this output; report it to the owner."}
-        return self._accepted_result(job_id, st, checks=ev["checks"])
+        return self._accepted_result(job_id, st, j, checks=ev["checks"])
 
-    def _accepted_result(self, job_id: int, st: dict, checks: Optional[dict] = None, already: bool = False) -> dict:
+    def _accepted_result(self, job_id: int, st: dict, j: dict, checks: Optional[dict] = None,
+                         already: bool = False) -> dict:
         path = self.a.outbox / f"{_out(job_id, st)}.cleaned.csv"
         rows = list(csv.reader(io.StringIO(path.read_text()))) if path.exists() else []
         return {"accepted": True, "already_accepted": already, "independent_checks": checks,
+                "payment": (f"The {_near(j['amount'])} NEAR escrow was released to the provider when the PASS "
+                            "landed on-chain. It is claimable by the provider, who collects it with withdraw; "
+                            "accepting does not move money."),
                 "cleaned_file": str(path), "rows": max(0, len(rows) - 1), "preview": rows[:6],
                 "proof_page": self._proof(job_id)}
 

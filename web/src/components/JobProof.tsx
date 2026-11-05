@@ -3,6 +3,7 @@ import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import { API_ENABLED, API_URL, CONTRACT_ID, RPCS, accountUrl } from "@/lib/config";
 import { fmtDuration, fmtTime, sha256Hex, yoctoToNear, type Job } from "@/lib/near.mjs";
+import { describeProvenance, type ProvenanceLine } from "@/lib/provenance.mjs";
 import { attemptsLine, buildTimeline, sealFor } from "@/lib/timeline.mjs";
 import { Seal } from "./Seal";
 import { loadJob, useAsync } from "./useJob";
@@ -49,7 +50,7 @@ function Proof({ job }: { job: Job }) {
         <div>
           <h1>Job {job.job_id}</h1>
           <p className="lede">
-            {job.status === "Passed" && <>The provider&apos;s work passed every check and it was paid {yoctoToNear(job.amount)} NEAR.</>}
+            {job.status === "Passed" && <>The provider&apos;s work passed every check, and the {yoctoToNear(job.amount)} NEAR escrow was released to the provider.</>}
             {job.status === "Refunded" && <>No submission passed, so the {yoctoToNear(job.amount)} NEAR went back to the owner. The provider was paid nothing.</>}
             {!final && <>{yoctoToNear(job.amount)} NEAR is held by the contract until the evaluator passes the work or a refund condition is met.</>}
           </p>
@@ -87,6 +88,7 @@ function Proof({ job }: { job: Job }) {
             <div><dt>Attempts</dt><dd>{attemptsLine(job)}</dd></div>
             <div><dt>Deadline</dt><dd>{fmtTime(job.deadline)}</dd></div>
             <div><dt>Evaluation window</dt><dd>{fmtDuration(job.eval_window_secs)} per submission</dd></div>
+            {job.submission_seq > 0 && <ModelUsed jobId={job.job_id} />}
           </dl>
         </aside>
       </div>
@@ -120,7 +122,7 @@ function CanaryCheck({ job }: { job: Job }) {
     }
     fetch(`${API_URL}/jobs/${job.job_id}/reveal`).then(async (r) => {
       if (r.status !== 200) {
-        setRes({ tone: "neutral", text: `The canary set isn't available from the API (${r.status}). Files are deleted 7 days after a job ends; the on-chain check above still stands.` });
+        setRes({ tone: "neutral", text: `This server doesn't hold the canary set for this job (${r.status}), so your browser can't re-check it here. Jobs judged before the hosted evaluator went live were evaluated on the owner's machine, and files are deleted 7 days after a job ends. The contract's own check at reveal time, shown above, still stands.` });
         return;
       }
       const h = await sha256Hex(await r.arrayBuffer());
@@ -138,5 +140,31 @@ function CanaryCheck({ job }: { job: Job }) {
       </p>
       {res && <div className="check" data-tone={res.tone} aria-live="polite"><p className="mono" style={{ fontFamily: "var(--sans)" }}>{res.text}</p></div>}
     </section>
+  );
+}
+
+function ModelUsed({ jobId }: { jobId: number }) {
+  const [lines, setLines] = useState<ProvenanceLine[] | null>(null);
+  useEffect(() => {
+    if (!API_ENABLED) return;
+    fetch(`${API_URL}/jobs/${jobId}/provenance`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => setLines(describeProvenance(p)))
+      .catch(() => setLines(null));
+  }, [jobId]);
+  if (!API_ENABLED || lines === null) return null;
+  return (
+    <div>
+      <dt>Model used</dt>
+      <dd>
+        {lines.length === 0 && <span className="muted">Not recorded for this job</span>}
+        {lines.map((l) => (
+          <p key={l.seq} style={{ margin: 0 }}>
+            {lines.length > 1 && <>Submission {l.seq}: </>}<span className="mono">{l.text}</span>
+            <br /><span className="muted small">{l.label}</span>
+          </p>
+        ))}
+      </dd>
+    </div>
   );
 }

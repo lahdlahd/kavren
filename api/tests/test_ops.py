@@ -17,6 +17,7 @@ PUBLIC = {
     ("GET", "/drafts/{draft_id}"),          # hashes + spec only, never files
     ("GET", "/jobs/{job_id}/check"),        # does the on-chain job match a draft (yes/no + status)
     ("GET", "/jobs/{job_id}/reveal"),       # canary opening, only once the job is final (synthetic rows)
+    ("GET", "/jobs/{job_id}/provenance"),   # model + service host the provider reports; no file content
 }
 AUTHED = {
     ("POST", "/drafts"), ("POST", "/jobs/{job_id}/register"),

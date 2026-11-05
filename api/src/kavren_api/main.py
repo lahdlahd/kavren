@@ -110,8 +110,13 @@ def create_app(service: Optional[Service] = None) -> FastAPI:
         return csv_(service.get_input(who, job_id))
 
     @app.post("/jobs/{job_id}/submissions")
-    async def submit(job_id: int, file: UploadFile = File(...), who: str = Depends(caller)):
-        return service.upload_submission(who, job_id, await read_limited(file))
+    async def submit(job_id: int, file: UploadFile = File(...), provenance: Optional[str] = Form(default=None),
+                     who: str = Depends(caller)):
+        return service.upload_submission(who, job_id, await read_limited(file), provenance)
+
+    @app.get("/jobs/{job_id}/provenance")
+    def provenance(job_id: int):
+        return service.get_provenance(job_id)
 
     @app.get("/jobs/{job_id}/reports/{seq}")
     def report(job_id: int, seq: int, who: str = Depends(caller)):

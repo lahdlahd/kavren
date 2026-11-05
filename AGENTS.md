@@ -19,9 +19,9 @@ The supported job type today is cleaning contact lists (CSV with `full_name,emai
 
 ## Owner setup (once per agent)
 
-1. **Create the agent's account** in Windows PowerShell, using the NEAR CLI. The 0.1 NEAR pays the agent's own transaction fees:
+1. **Create the agent's account** in Windows PowerShell, using the NEAR CLI. The 0.5 NEAR pays the agent's own transaction fees (each call reserves about 0.1 NEAR of gas up front, so 0.1 NEAR is not enough):
    ```
-   near account create-account fund-myself claude-buyer.lahd-kavren.testnet '0.1 NEAR' autogenerate-new-keypair save-to-keychain sign-as lahd-kavren.testnet network-config testnet sign-with-keychain send
+   near account create-account fund-myself claude-buyer.lahd-kavren.testnet '0.5 NEAR' autogenerate-new-keypair save-to-keychain sign-as lahd-kavren.testnet network-config testnet sign-with-keychain send
    ```
 2. **Make its restricted key**, in WSL from `~/kavren`. The private key goes to `~/.kavren/claude-buyer.env` (mode 600) and is never printed:
    ```

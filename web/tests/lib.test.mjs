@@ -99,3 +99,18 @@ test("refund reason follows the contract's three refund conditions", () => {
   const deadline = { ...JOB, attempts_used: 1, submission_seq: 1, verdicts: JOB.verdicts.slice(0, 1) };
   assert.match(refundReason(deadline), /deadline passed without a PASS/);
 });
+
+test("provenance is labelled as the provider's claim unless verified", async () => {
+  const { describeProvenance } = await import("../src/lib/provenance.mjs");
+  const [l] = describeProvenance({ submissions: [{ seq: 1, model: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    service: "cloud-api.near.ai", plan_calls: 1, verification: "reported_by_provider" }] });
+  assert.equal(l.text, "deepseek-ai/DeepSeek-V4.1-Flash-1017 on NEAR AI Cloud (cloud-api.near.ai)");
+  assert.match(l.label, /Reported by the provider/);
+  assert.equal(l.verified, false);
+  assert.deepEqual(describeProvenance({ submissions: [] }), []);
+  assert.deepEqual(describeProvenance(null), []);
+});
+
+test("a passed job is described as released, not paid", () => {
+  assert.equal(sealFor({ ...JOB, status: "Passed" }, 0).line, "Accepted · released to provider");
+});

@@ -261,3 +261,77 @@ def test_upload_lag_is_retried_and_a_lost_upload_is_delivered_later(world):
     assert not list((w["tmp"] / "provider-state").glob("*.csv"))
     w["svc"].process_pending()
     assert w["contract"].jobs[jid]["status"] == "Passed"
+
+
+class Reporting(Scripted):
+    """A scripted planner that also exposes what NearAIPlanner records about each call."""
+    model, base_url = "deepseek-ai/DeepSeek-V4.1-Flash-1017", "https://cloud-api.near.ai/v1"
+
+    def plan(self, spec, work_csv, feedback=None):
+        self.last_completion_id, self.last_served_model = f"chatcmpl-{len(self.calls) + 1}", self.model
+        return super().plan(spec, work_csv, feedback)
+
+
+def test_each_submission_records_the_model_and_service_the_provider_reports(world):
+    w = world
+    jid = hire(w)
+    ev = provider(w, Reporting(first={"rejects": [], "merges": []})).tick()  # 1 lazy plan + 1 revision
+    assert ev[0]["action"] == "submitted" and ev[0]["uploaded"] is True
+    p = w["svc"].get_provenance(jid)["submissions"]
+    assert p == [{"seq": 1, "model": Reporting.model, "service": "cloud-api.near.ai", "plan_calls": 2,
+                  "verification": "reported_by_provider"}]
+
+
+def test_a_delayed_upload_keeps_its_provenance_across_a_restart(world):
+    from test_buyer import LaggingChain
+    w = world
+    jid = hire(w)
+    lagging = LaggingChain(w["contract"])
+    w["svc"].chain = lagging
+    p = provider(w, Reporting())
+    real_call = p.chain.call
+
+    def call_then_lag(method, args):
+        if method == "submit_work":
+            lagging.lag(100)
+        return real_call(method, args)
+    p.chain.call = call_then_lag
+    assert p.tick()[0]["uploaded"] is False
+    lagging.n = 0
+    assert provider(w, Scripted()).tick()[0]["action"] == "uploaded_pending"  # restarted, plain planner
+    assert w["svc"].get_provenance(jid)["submissions"][0]["model"] == Reporting.model
+    assert not list((w["tmp"] / "provider-state").glob("job*"))  # file and its record both cleaned up
+
+
+def test_planners_without_provenance_still_upload(world):
+    w = world
+    jid = hire(w)
+    assert provider(w, Scripted()).tick()[0]["uploaded"] is True
+    assert w["svc"].get_provenance(jid)["submissions"] == []
+
+
+def test_only_one_provider_can_run_per_account(tmp_path):
+    from kavren_agents.provider import single_instance
+    first = single_instance(tmp_path, "provider-agent.testnet")
+    assert first is not None
+    assert single_instance(tmp_path, "provider-agent.testnet") is None  # the duplicate is refused
+    assert single_instance(tmp_path, "other.testnet") is not None
+    first.close()  # process exit releases it
+    assert single_instance(tmp_path, "provider-agent.testnet") is not None
+
+
+def test_near_ai_planner_records_completion_id_and_served_model():
+    from kavren_core.templates import get_template
+
+    def handler(req):
+        return httpx.Response(200, text=_sse(
+            {"id": "chatcmpl-xyz", "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+             "choices": [{"delta": {"content": '{"rejects":[],"merges":[]}'}}]},
+            {"id": "chatcmpl-xyz", "choices": [], "usage": {"completion_tokens": 3}}),
+            headers={"content-type": "text/event-stream"})
+
+    pl = NearAIPlanner("k", base_url="https://cloud-api.near.ai/v1",
+                       http=httpx.Client(transport=httpx.MockTransport(handler), base_url="https://x/v1"))
+    pl.plan(get_template("contacts-v1").build_spec(), "record_id,full_name,email,signup_date\nab,A,a@b.co,\n")
+    assert (pl.last_completion_id, pl.last_served_model) == ("chatcmpl-xyz", "deepseek-ai/DeepSeek-V4.1-Flash-1017")
+    assert pl.base_url == "https://cloud-api.near.ai/v1"

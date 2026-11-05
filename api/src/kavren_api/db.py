@@ -63,6 +63,17 @@ submissions = Table(
 )
 
 
+# What the provider says produced each submission (model, service, completion ids). A separate table so
+# existing databases gain it via create_all without a migration. Unverified unless `verified` says so.
+submission_provenance = Table(
+    "submission_provenance", metadata,
+    Column("job_id", BigInteger, primary_key=True),
+    Column("seq", Integer, primary_key=True),
+    Column("provenance_json", Text, nullable=False),
+    Column("recorded_at", BigInteger, nullable=False),
+)
+
+
 def make_engine(url: str):
     if url.startswith("sqlite:///"):
         import os

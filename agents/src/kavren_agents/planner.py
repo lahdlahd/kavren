@@ -15,7 +15,7 @@ import httpx
 
 from kavren_core.spec import Spec
 
-DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"  # NEAR AI-hosted, attested TEE (ownedBy: nearai)
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"  # NEAR AI-hosted (ownedBy: nearai); attestation not verified by KAVREN yet
 
 
 class Planner(Protocol):
@@ -107,6 +107,11 @@ class NearAIPlanner:
                  max_tokens: int = 8000, http: Optional[httpx.Client] = None,
                  idle_timeout: float = 120, total_timeout: float = 600):
         self.model, self.max_tokens, self.total_timeout = model, max_tokens, total_timeout
+        self.base_url = base_url
+        # From the last successful stream: the completion id NEAR AI assigned and the model it says served it.
+        # Recorded with each submission (as reported by the provider, not yet attestation-verified).
+        self.last_completion_id: Optional[str] = None
+        self.last_served_model: Optional[str] = None
         self.http = http or httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {api_key}"},
                                          timeout=httpx.Timeout(30, read=idle_timeout))
         self.reasoning_effort: Optional[str] = "low"  # dropped automatically if the server rejects it
@@ -124,6 +129,7 @@ class NearAIPlanner:
         import time as _t
         for _ in range(2):
             content, usage, start = [], {}, _t.time()
+            cid, served = None, None
             with self.http.stream("POST", "/chat/completions", json=self._body(spec, work_csv, feedback)) as r:
                 if r.status_code == 400 and self.reasoning_effort:
                     r.read()
@@ -142,6 +148,8 @@ class NearAIPlanner:
                     if data == "[DONE]":
                         break
                     chunk = json.loads(data)
+                    cid = cid or chunk.get("id")
+                    served = served or chunk.get("model")
                     if chunk.get("usage"):
                         usage = chunk["usage"]
                     for ch in chunk.get("choices", []):
@@ -150,5 +158,6 @@ class NearAIPlanner:
                             content.append(piece)
                     if on_progress:
                         on_progress()
+            self.last_completion_id, self.last_served_model = cid, served
             return extract_json("".join(content)), usage
         raise RuntimeError("unreachable")

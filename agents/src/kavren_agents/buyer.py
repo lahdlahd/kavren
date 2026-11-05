@@ -301,7 +301,7 @@ def main() -> None:
     env = {**load_env_file(os.environ.get("BUYER_KEY_FILE", "~/.kavren/buyer-agent.env")), **os.environ}
     acct, key = env["BUYER_AGENT_ACCOUNT_ID"], env["BUYER_AGENT_FC_PRIVATE_KEY"]
     chain = AgentChain(env.get("NEAR_RPC_URL", ""), env["KAVREN_CONTRACT_ID"], acct, key)
-    api = ApiClient(env.get("KAVREN_API_URL", "http://127.0.0.1:8000"), acct, key)
+    api = ApiClient(env.get("KAVREN_API_URL", "https://kavren.onrender.com"), acct, key)
     agent = BuyerAgent(acct, env["BUYER_OWNER_ACCOUNT_ID"], chain, api,
                        Path(env.get("INBOX_DIR", "./inbox")).expanduser(), Path(env.get("OUTBOX_DIR", "./outbox")).expanduser())
     log.info("buyer agent %s for owner %s watching %s", acct, agent.owner_id, agent.inbox)

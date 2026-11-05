@@ -349,3 +349,46 @@ def test_storage_rejects_path_tricks(tmp_path):
     for bad in ["../x.csv", "drafts/../../x.csv", "/etc/passwd", "a/b.txt", "A/b.csv"]:
         with pytest.raises(ValueError):
             st.put(bad, b"x")
+
+
+def test_submission_records_the_model_the_provider_reports(env):
+    import json as _json
+    svc, chain, clock, c = env
+    agent, prov = login(c, chain, "buyer-agent.testnet"), login(c, chain, "provider-agent.testnet")
+    jid, draft = make_job(svc, chain, c, agent)
+    good = clean(load_spec(draft["spec_json"].encode()), c.get(f"/jobs/{jid}/work", headers=prov).content)
+    chain.submit_work(jid, sha256_hex(good), clock.t)
+    meta = {"model": "deepseek-ai/DeepSeek-V4.1-Flash-1017", "service": "https://cloud-api.near.ai/v1",
+            "completion_ids": ["chatcmpl-abc123"]}
+    r = c.post(f"/jobs/{jid}/submissions", files={"file": ("s.csv", good)},
+               data={"provenance": _json.dumps(meta)}, headers=prov)
+    assert r.status_code == 200
+    # a second upload of the same file can't overwrite what was recorded first
+    c.post(f"/jobs/{jid}/submissions", files={"file": ("s.csv", good)},
+           data={"provenance": _json.dumps({**meta, "model": "other/model"})}, headers=prov)
+    p = c.get(f"/jobs/{jid}/provenance").json()  # public, no login
+    assert p["submissions"] == [{"seq": 1, "model": meta["model"], "service": "cloud-api.near.ai",
+                                 "plan_calls": 1, "verification": "reported_by_provider"}]
+    assert "chatcmpl" not in c.get(f"/jobs/{jid}/provenance").text
+
+
+def test_bad_or_missing_provenance_never_blocks_the_file(env):
+    svc, chain, clock, c = env
+    agent, prov = login(c, chain, "buyer-agent.testnet"), login(c, chain, "provider-agent.testnet")
+    jid, draft = make_job(svc, chain, c, agent)
+    good = clean(load_spec(draft["spec_json"].encode()), c.get(f"/jobs/{jid}/work", headers=prov).content)
+    chain.submit_work(jid, sha256_hex(good), clock.t)
+    r = c.post(f"/jobs/{jid}/submissions", files={"file": ("s.csv", good)},
+               data={"provenance": '{"model": "<script>", "service": "http://x"}'}, headers=prov)
+    assert r.status_code == 200 and r.json()["state"] == "pending"
+    assert c.get(f"/jobs/{jid}/provenance").json()["submissions"] == []
+    assert svc.process_pending()[0]["verdict"] == "PASS"
+
+
+def test_parse_provenance_keeps_only_safe_fields():
+    from kavren_api.service import parse_provenance
+    assert parse_provenance(None) is None and parse_provenance("x" * 5000) is None
+    assert parse_provenance('{"model": "m", "service": "ftp://h"}') is None
+    assert parse_provenance('{"model": "m", "completion_ids": ["a b"]}') is None
+    ok = parse_provenance('{"model": "a/b-1", "service": "https://cloud-api.near.ai/v1?k=secret", "extra": 1}')
+    assert ok == {"model": "a/b-1", "service": "cloud-api.near.ai", "completion_ids": []}

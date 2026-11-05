@@ -5,7 +5,7 @@ import { fmtDuration, yoctoToNear } from "./near.mjs";
 
 /** The seal shown on the proof page. */
 export function sealFor(job, now) {
-  if (job.status === "Passed") return { word: "Pass", tone: "pass", line: "Accepted and paid" };
+  if (job.status === "Passed") return { word: "Pass", tone: "pass", line: "Accepted · released to provider" };
   if (job.status === "Refunded") return { word: "Refunded", tone: "fail", line: "No PASS; escrow returned to the owner" };
   if (job.status === "Submitted") return { word: "Judging", tone: "wait", line: "Waiting for the evaluator's verdict" };
   const refundable = now >= job.deadline || job.attempts_used >= job.max_attempts;
