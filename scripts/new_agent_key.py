@@ -3,6 +3,7 @@
     python3 scripts/new_agent_key.py evaluator
     python3 scripts/new_agent_key.py buyer-agent
     python3 scripts/new_agent_key.py provider-agent
+    python3 scripts/new_agent_key.py claude-buyer     (an outside agent using kavren-mcp)
 
 - The private key is written ONLY to ~/.kavren/<role>.env (outside the repo;
   folder mode 0700, file mode 0600). It is never printed.
@@ -27,6 +28,8 @@ PARENT = os.environ.get("KAVREN_PARENT_ACCOUNT", "lahd-kavren.testnet")
 ROLES = {
     "evaluator": ("EVALUATOR_ACCOUNT_ID", "EVALUATOR_FC_PRIVATE_KEY", ["submit_verdict", "reveal_canaries"]),
     "buyer-agent": ("BUYER_AGENT_ACCOUNT_ID", "BUYER_AGENT_FC_PRIVATE_KEY", ["create_job", "refund_job"]),
+    # an outside AI agent using the MCP tools: exactly the buyer agent's permissions
+    "claude-buyer": ("BUYER_AGENT_ACCOUNT_ID", "BUYER_AGENT_FC_PRIVATE_KEY", ["create_job", "refund_job"]),
     "provider-agent": ("PROVIDER_ACCOUNT_ID", "PROVIDER_FC_PRIVATE_KEY", ["submit_work", "withdraw"]),
 }
 
@@ -53,6 +56,8 @@ def main() -> None:
     fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(f"{id_var}={account}\n{key_var}={secret}\nKAVREN_CONTRACT_ID={CONTRACT}\n")
+        if a.role.endswith("buyer") or a.role == "buyer-agent":
+            f.write(f"BUYER_OWNER_ACCOUNT_ID={PARENT}\n")
 
     print(f"Private key saved to {out} (mode 0600). It was NOT printed.\n")
     print(f"Account : {account}")

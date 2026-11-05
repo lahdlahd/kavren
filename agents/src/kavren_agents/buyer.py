@@ -68,31 +68,32 @@ class BuyerAgent:
 
     # ------------------------------------------------------------------ hiring
     def take(self, path: Path) -> dict:
-        recovered = self._recover_pending(path)
+        recovered = self._recover_pending(path.name, on_found=lambda: self._move(path, "processed"))
         if recovered:
             return recovered
-        data = path.read_bytes()
-        decision = self.decide(path.name, data)
-        if decision["action"] == "wait":
-            return decision  # keep the file in the inbox; try again on a later tick
-        if decision["action"] != "hire":
-            self._move(path, "processed")
-            self._receipt(path.stem, decision)
-            return decision
-        r = self.api.request("POST", "/drafts", files={"file": (path.name, data, "text/csv")},
-                             data={"template_id": decision["template_id"]})
-        if r.status_code != 200:
-            out = {"file": path.name, "action": "skip", "reason": f"draft refused: {r.json().get('detail')}"}
+        out = self.hire_bytes(path.name, path.read_bytes(), after_hire=lambda: self._move(path, "processed"))
+        if out["action"] == "wait":
+            return out  # keep the file in the inbox; try again on a later tick
+        if out["action"] != "hired":
             self._move(path, "processed")
             self._receipt(path.stem, out)
-            return out
+        return out
+
+    def hire_bytes(self, name: str, data: bytes, after_hire: Optional[Callable[[], None]] = None) -> dict:
+        """Decide under the owner's policy and, if allowed, hire: draft -> create_job -> register.
+        Shared by the inbox loop and the MCP tools. `after_hire` runs once the job is tracked
+        (the inbox loop moves the file there)."""
+        decision = self.decide(name, data)
+        if decision["action"] != "hire":
+            return decision
+        r = self.api.request("POST", "/drafts", files={"file": (name, data, "text/csv")},
+                             data={"template_id": decision["template_id"]})
+        if r.status_code != 200:
+            return {"file": name, "action": "skip", "reason": f"draft refused: {r.json().get('detail')}"}
         draft = r.json()
         price = int(draft["price_yocto"])
         if price != decision["price_yocto"]:
-            out = {"file": path.name, "action": "skip", "reason": "price mismatch between agent and protocol"}
-            self._move(path, "processed")
-            self._receipt(path.stem, out)
-            return out
+            return {"file": name, "action": "skip", "reason": "price mismatch between agent and protocol"}
         args = {"args": {
             "owner_id": self.owner_id, "provider_id": decision["provider_id"], "amount": str(price),
             "template_id": draft["template_id"], "spec_json": draft["spec_json"], "draft_id": draft["draft_id"],
@@ -101,39 +102,41 @@ class BuyerAgent:
             "deadline": int(self.clock()) + DEFAULT_DEADLINE_SECS, "max_attempts": decision["max_attempts"],
         }}
         # Idempotent hiring: remember the draft BEFORE the transaction, so that if the call
-        # errors after the job was actually created, the next tick finds and adopts it
+        # errors after the job was actually created, the next attempt finds and adopts it
         # instead of hiring a second time.
-        self.state.setdefault("pending", {})[path.name] = {
+        self.state.setdefault("pending", {})[name] = {
             "draft_id": draft["draft_id"], "provider_id": decision["provider_id"], "at": int(self.clock())}
         self._save()
         res = self.chain.call("create_job", args)
         job_id = int(res["value"])
-        self._track(job_id, path.name, draft["draft_id"], str(price), create_tx=res["tx"])
-        self.state["pending"].pop(path.name, None)
-        self._move(path, "processed")
+        self._track(job_id, name, draft["draft_id"], str(price), create_tx=res["tx"])
+        self.state["pending"].pop(name, None)
+        if after_hire:
+            after_hire()
         self._save()
         self._register(job_id, after_write=True)
-        out = {"file": path.name, "action": "hired", "job_id": job_id, "provider_id": decision["provider_id"],
+        out = {"file": name, "action": "hired", "job_id": job_id, "provider_id": decision["provider_id"],
                "price_yocto": str(price), "tx": res["tx"]}
         log.info("hired: %s", out)
         return out
 
-    def _recover_pending(self, path: Path) -> Optional[dict]:
+    def _recover_pending(self, name: str, on_found: Optional[Callable[[], None]] = None) -> Optional[dict]:
         """A previous hire for this file may have reached the chain even though the call
         raised. Look for it before hiring again."""
-        p = self.state.get("pending", {}).get(path.name)
+        p = self.state.get("pending", {}).get(name)
         if not p:
             return None
         for j in self._provider_jobs(p["provider_id"]):
             if j["draft_id"] == p["draft_id"] and j["buyer_agent"] == self.account_id:
-                self._track(j["job_id"], path.name, p["draft_id"], j["amount"])
-                self.state["pending"].pop(path.name)
-                self._move(path, "processed")
+                self._track(j["job_id"], name, p["draft_id"], j["amount"])
+                self.state["pending"].pop(name)
+                if on_found:
+                    on_found()
                 self._register(j["job_id"])
-                return {"file": path.name, "action": "recovered", "job_id": j["job_id"]}
+                return {"file": name, "action": "recovered", "job_id": j["job_id"]}
         if int(self.clock()) - p["at"] < 180:
-            return {"file": path.name, "action": "wait", "reason": "checking whether the last hire reached the chain"}
-        self.state["pending"].pop(path.name)  # it really did not happen; hiring again is safe
+            return {"file": name, "action": "wait", "reason": "checking whether the last hire reached the chain"}
+        self.state["pending"].pop(name)  # it really did not happen; hiring again is safe
         return None
 
     def reconcile(self) -> list[dict]:
