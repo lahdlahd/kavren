@@ -111,8 +111,9 @@ def create_app(service: Optional[Service] = None) -> FastAPI:
 
     @app.post("/jobs/{job_id}/submissions")
     async def submit(job_id: int, file: UploadFile = File(...), provenance: Optional[str] = Form(default=None),
-                     who: str = Depends(caller)):
-        return service.upload_submission(who, job_id, await read_limited(file), provenance)
+                     evidence: Optional[UploadFile] = File(default=None), who: str = Depends(caller)):
+        ev = await read_limited(evidence) if evidence is not None else None
+        return service.upload_submission(who, job_id, await read_limited(file), provenance, ev)
 
     @app.get("/jobs/{job_id}/provenance")
     def provenance(job_id: int):

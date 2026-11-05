@@ -21,3 +21,5 @@ services:
         sync: false                     # entered by you in the dashboard, never stored in Git
       - key: AUTH_RECIPIENT
         value: kavren-api
+      - key: EVALUATOR_NEAR_AI_API_KEY  # the evaluator's own NEAR AI key: attestation reports only
+        sync: false                     # entered by you in the dashboard, never stored in Git

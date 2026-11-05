@@ -17,6 +17,7 @@ dependencies = [
   "pynacl>=1.5",
   "base58>=2.1",
   "py-near==1.2.22",
+  "nearai-inference-sdk==0.2.1",  # NEAR AI's official attestation verifier (see kavren_api/attest.py)
 ]
 
 [project.optional-dependencies]

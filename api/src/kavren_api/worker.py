@@ -25,6 +25,10 @@ def run_once(svc: Service) -> dict:
         svc.purge_auth()
     except Exception:  # keep the loop alive; each item records its own error
         log.exception("worker pass failed")
+    try:  # separate: an attestation problem can never hold up verdicts, reveals or retention
+        out["attested"] = svc.verify_attestations()
+    except Exception:
+        log.exception("attestation pass failed")
     return out
 
 

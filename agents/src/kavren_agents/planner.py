@@ -7,15 +7,19 @@ the evaluator's report (which never names canaries).
 """
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
+import logging
 import re
-from typing import Optional, Protocol
+from typing import Awaitable, Callable, Optional, Protocol
 
 import httpx
 
 from kavren_core.spec import Spec
 
-DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"  # NEAR AI-hosted (ownedBy: nearai); attestation not verified by KAVREN yet
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"  # NEAR AI-hosted (ownedBy: nearai), runs in a NEAR TEE
+log = logging.getLogger("kavren.planner")
 
 
 class Planner(Protocol):
@@ -98,16 +102,30 @@ def extract_json(text: str) -> dict:
     return obj
 
 
+# body -> {"content", "usage", "id", "model", "evidence" (or None)}
+AttestedCall = Callable[[dict], Awaitable[dict]]
+
+
 class NearAIPlanner:
-    """Streams the reply so a slow 'thinking' model never hits a whole-request timeout.
-    A request fails only if the server is silent for `idle_timeout` seconds, or the whole
+    """With `attested=True` (the provider's default) each planning call is made WITHOUT streaming through
+    NEAR AI's official SDK, which verifies the model's TEE attestation first; the exact request/response bytes
+    and NEAR AI's `provider_tee` signature are kept as evidence for the evaluator to check independently.
+    (Streamed replies only carry a gateway signature, which does not prove the model produced them.)
+    If that call fails for any reason, it falls back to the streaming path below, with no evidence, so the
+    submission is labelled "reported by the provider" rather than lost.
+
+    Streaming path: a request fails only if the server is silent for `idle_timeout` seconds, or the whole
     answer takes longer than `total_timeout`."""
 
     def __init__(self, api_key: str, base_url: str = "https://cloud-api.near.ai/v1", model: str = DEFAULT_MODEL,
                  max_tokens: int = 8000, http: Optional[httpx.Client] = None,
-                 idle_timeout: float = 120, total_timeout: float = 600):
+                 idle_timeout: float = 120, total_timeout: float = 600, attested: bool = False,
+                 attested_call: Optional[AttestedCall] = None):
         self.model, self.max_tokens, self.total_timeout = model, max_tokens, total_timeout
         self.base_url = base_url
+        self.attested = attested
+        self.attested_call = attested_call or (lambda body: sdk_attested_call(api_key, base_url, body, total_timeout))
+        self.last_evidence: Optional[dict] = None  # evidence of the last call, None if it has none
         # From the last successful stream: the completion id NEAR AI assigned and the model it says served it.
         # Recorded with each submission (as reported by the provider, not yet attestation-verified).
         self.last_completion_id: Optional[str] = None
@@ -126,6 +144,28 @@ class NearAIPlanner:
         return b
 
     def plan(self, spec, work_csv, feedback=None, on_progress=None):
+        self.last_evidence = None
+        if self.attested:
+            body = self._body(spec, work_csv, feedback)
+            body.pop("stream"), body.pop("stream_options")
+            try:
+                if on_progress:
+                    on_progress()
+                r = asyncio.run(self.attested_call(body))
+            except Exception as e:  # infrastructure, not the plan: fall back, unverified
+                log.warning("attested planning call failed (%s: %s); streaming instead, without evidence",
+                            type(e).__name__, str(e)[:200])
+            else:
+                if r.get("reasoning_effort_rejected"):
+                    self.reasoning_effort = None
+                self.last_completion_id, self.last_served_model = r.get("id"), r.get("model")
+                self.last_evidence = r.get("evidence")
+                if on_progress:
+                    on_progress()
+                return extract_json(r["content"] or ""), r.get("usage") or {}
+        return self._plan_streamed(spec, work_csv, feedback, on_progress)
+
+    def _plan_streamed(self, spec, work_csv, feedback=None, on_progress=None):
         import time as _t
         for _ in range(2):
             content, usage, start = [], {}, _t.time()
@@ -161,3 +201,40 @@ class NearAIPlanner:
             self.last_completion_id, self.last_served_model = cid, served
             return extract_json("".join(content)), usage
         raise RuntimeError("unreachable")
+
+
+async def sdk_attested_call(api_key: str, base_url: str, body: dict, timeout: float) -> dict:
+    """One non-streamed chat call through NEAR AI's SDK: it verifies the Gateway and the model's TEE
+    attestation BEFORE sending, then we verify NEAR AI's signature over the exact bytes and keep them."""
+    import openai
+    from nearai_inference_sdk import InferenceClient
+
+    rejected = False
+    async with InferenceClient(api_key, base_url=base_url) as client:
+        for _ in range(2):
+            try:
+                comp = await client.chat.completions.create(**body, timeout=timeout)
+                break
+            except openai.BadRequestError:
+                if "reasoning_effort" not in body:
+                    raise
+                body = {k: v for k, v in body.items() if k != "reasoning_effort"}
+                rejected = True
+        out = {"content": comp.choices[0].message.content if comp.choices else "",
+               "usage": comp.usage.model_dump() if comp.usage else {}, "id": comp.id,
+               "model": body["model"],  # the model name NEAR AI's signature covers
+               "evidence": None, "reasoning_effort_rejected": rejected}
+        try:
+            v = await client.verify_response(comp.id)
+            rec = client._get_response_record(comp.id)  # exact wire bytes the SDK verified (SDK pinned)
+            if v.signature_kind == "provider_tee" and rec is not None:
+                sig = v.signature
+                out["evidence"] = {
+                    "request_b64": base64.b64encode(rec.request_body).decode(),
+                    "response_b64": base64.b64encode(await rec.response_body).decode(),
+                    "signature": {"kind": sig.kind, "signed_text": sig.signed_text, "signature": sig.signature,
+                                  "signing_algo": sig.signer.signing_algo,
+                                  "signing_address": sig.signer.signing_address}}
+        except Exception as e:  # the answer is still usable; it just carries no evidence
+            log.warning("NEAR AI response signature not verified (%s); no evidence attached", type(e).__name__)
+        return out

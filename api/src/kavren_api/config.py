@@ -19,6 +19,10 @@ class Settings:
     session_ttl_secs: int = 1800
     max_upload_bytes: int = 5 * 1024 * 1024
     verdict_safety_margin_secs: int = 300
+    # The evaluator's OWN NEAR AI key, used only to fetch attestation reports (not billed by NEAR AI).
+    # Empty: provider evidence is stored but never checked, so the page keeps "reported by the provider".
+    near_ai_api_key: str = ""
+    near_ai_base_url: str = "https://cloud-api.near.ai/v1"
 
     @staticmethod
     def from_env() -> "Settings":
@@ -32,4 +36,6 @@ class Settings:
             evaluator_fc_private_key=e.get("EVALUATOR_FC_PRIVATE_KEY", ""),
             auth_recipient=e.get("AUTH_RECIPIENT", "kavren-api"),
             file_retention_days=int(e.get("FILE_RETENTION_DAYS", "7")),
+            near_ai_api_key=e.get("EVALUATOR_NEAR_AI_API_KEY", ""),
+            near_ai_base_url=e.get("NEAR_AI_BASE_URL", "https://cloud-api.near.ai/v1"),
         )

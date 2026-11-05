@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import random
 import re
 import secrets
@@ -24,8 +25,11 @@ from kavren_core.templates import get_template, select_template
 from . import nep413
 from .chain import Chain
 from .config import Settings
-from .db import challenges, drafts, jobs, sessions, submission_provenance, submissions
+from . import attest
+from .db import challenges, drafts, jobs, provenance_checks, sessions, submission_provenance, submissions
 from .storage import Storage
+
+log = logging.getLogger("kavren.service")
 
 FINAL = ("Passed", "Refunded")
 
@@ -44,6 +48,7 @@ class Service:
     chain: Chain
     clock: Callable[[], float] = time.time
     rng: random.Random = random.SystemRandom()
+    attestation_check: Optional[attest.SdkCheck] = None  # tests inject a fake; default: NEAR AI's SDK
 
     def now(self) -> int:
         return int(self.clock())
@@ -194,7 +199,8 @@ class Service:
             raise ApiError(403, "only the job's owner or buyer agent")
         return self._file(f"drafts/{d.draft_id}/input.csv", d)
 
-    def upload_submission(self, caller: str, job_id: int, data: bytes, provenance: Optional[str] = None) -> dict:
+    def upload_submission(self, caller: str, job_id: int, data: bytes, provenance: Optional[str] = None,
+                          evidence: Optional[bytes] = None) -> dict:
         j, d = self._job_and_draft(job_id)
         if caller != j["provider_id"]:
             raise ApiError(403, "only the job's provider")
@@ -213,19 +219,25 @@ class Service:
                 self.storage.put(f"jobs/{job_id}/sub-{seq}.csv", data)
                 c.execute(insert(submissions).values(job_id=job_id, seq=seq, output_hash=h, uploaded_at=self.now(),
                                                      state="pending", tries=0))
-            self._record_provenance(c, job_id, seq, provenance)
+            self._record_provenance(c, job_id, seq, provenance, evidence)
         return {"job_id": job_id, "seq": seq, "output_hash": h, "state": existing.state if existing else "pending"}
 
-    def _record_provenance(self, c, job_id: int, seq: int, raw: Optional[str]) -> None:
-        """Best effort: a malformed provenance field never blocks the file itself. First record wins."""
+    def _record_provenance(self, c, job_id: int, seq: int, raw: Optional[str], evidence: Optional[bytes]) -> None:
+        """Best effort: a malformed provenance field never blocks the file itself. First record wins.
+        Attestation evidence is kept privately next to the submission, only with a valid provenance record."""
         prov = parse_provenance(raw)
         if prov is None:
             return
         have = c.execute(select(submission_provenance.c.seq).where(and_(
             submission_provenance.c.job_id == job_id, submission_provenance.c.seq == seq))).first()
-        if not have:
-            c.execute(insert(submission_provenance).values(job_id=job_id, seq=seq, recorded_at=self.now(),
-                                                           provenance_json=json.dumps(prov)))
+        if have:
+            return
+        ev = attest.parse_evidence(evidence) if evidence else None
+        prov["has_evidence"] = ev is not None
+        if ev is not None:
+            self.storage.put(f"jobs/{job_id}/evidence-{seq}.json", json.dumps(ev).encode())
+        c.execute(insert(submission_provenance).values(job_id=job_id, seq=seq, recorded_at=self.now(),
+                                                       provenance_json=json.dumps(prov)))
 
     def get_provenance(self, job_id: int) -> dict:
         """Public: which model and service the provider reports for each submission. Read from our database
@@ -233,12 +245,82 @@ class Service:
         with self.engine.begin() as c:
             rows = c.execute(select(submission_provenance).where(submission_provenance.c.job_id == job_id)
                              .order_by(submission_provenance.c.seq)).all()
+            checks = {r.seq: r for r in c.execute(select(provenance_checks).where(
+                provenance_checks.c.job_id == job_id)).all()}
         out = []
         for r in rows:
             p = json.loads(r.provenance_json)
-            out.append({"seq": r.seq, "model": p["model"], "service": p.get("service"),
-                        "plan_calls": len(p.get("completion_ids", [])), "verification": "reported_by_provider"})
+            item = {"seq": r.seq, "model": p["model"], "service": p.get("service"),
+                    "plan_calls": len(p.get("completion_ids", [])), "verification": "reported_by_provider"}
+            ck = checks.get(r.seq)
+            if ck is not None and ck.status == "verified":
+                item["verification"] = "attestation_verified"
+                item["attestation"] = {**json.loads(ck.detail_json), "checked_at": ck.checked_at}
+            elif ck is not None and ck.status == "not_verified":
+                item["attestation_note"] = json.loads(ck.detail_json).get("reason")
+            out.append(item)
         return {"job_id": job_id, "submissions": out}
+
+    MAX_ATTESTATION_TRIES = 5
+    ATTESTATIONS_PER_PASS = 3  # each check calls NEAR AI, Intel and NVIDIA; keep worker passes short
+
+    def verify_attestations(self) -> list[dict]:
+        """Evaluator worker step: independently check each submission's attestation evidence (attest.py).
+        Never touches verdicts or payments; without an evaluator NEAR AI key it does nothing."""
+        if not self.settings.near_ai_api_key and self.attestation_check is None:
+            return []
+        check = self.attestation_check or attest.near_ai_check(self.settings.near_ai_api_key,
+                                                              self.settings.near_ai_base_url)
+        with self.engine.begin() as c:
+            rows = c.execute(select(submission_provenance)).all()
+            done = {(r.job_id, r.seq): r for r in c.execute(select(provenance_checks)).all()}
+        results = []
+        for r in rows:
+            if len(results) >= self.ATTESTATIONS_PER_PASS:
+                break
+            prev = done.get((r.job_id, r.seq))
+            if prev is not None and (prev.status != "retrying" or prev.tries >= self.MAX_ATTESTATION_TRIES):
+                continue
+            prov = json.loads(r.provenance_json)
+            if not prov.get("has_evidence"):
+                continue
+            status, detail = self._check_one(r.job_id, r.seq, prov["model"], check)
+            tries = (prev.tries if prev is not None else 0) + 1
+            if status == "retrying" and tries >= self.MAX_ATTESTATION_TRIES:
+                status, detail = "not_verified", {"reason": f"gave_up_after_retries: {detail['reason']}"}
+            with self.engine.begin() as c:
+                if prev is None:
+                    c.execute(insert(provenance_checks).values(job_id=r.job_id, seq=r.seq, status=status, tries=tries,
+                                                               detail_json=json.dumps(detail), checked_at=self.now()))
+                else:
+                    c.execute(update(provenance_checks).where(and_(provenance_checks.c.job_id == r.job_id,
+                                                                   provenance_checks.c.seq == r.seq))
+                              .values(status=status, tries=tries, detail_json=json.dumps(detail), checked_at=self.now()))
+            results.append({"job_id": r.job_id, "seq": r.seq, "status": status, **detail})
+        return results
+
+    def _check_one(self, job_id: int, seq: int, model: str, check) -> tuple[str, dict]:
+        try:
+            with self.engine.begin() as c:
+                jr = c.execute(select(jobs).where(jobs.c.job_id == job_id)).first()
+            if jr is None:
+                return "not_verified", {"reason": "job_not_registered"}
+            d = self._draft(jr.draft_id)
+            if d.files_deleted:
+                return "not_verified", {"reason": "files_deleted"}
+            ev = json.loads(self.storage.get(f"jobs/{job_id}/evidence-{seq}.json"))
+            summary = attest.verify(ev, spec=load_spec(d.spec_json.encode()),
+                                    work=self.storage.get(f"drafts/{d.draft_id}/work.csv"),
+                                    submission=self.storage.get(f"jobs/{job_id}/sub-{seq}.csv"),
+                                    claimed_model=model, sdk_check=check)
+            return "verified", summary
+        except attest.EvidenceError as e:
+            return "not_verified", {"reason": e.code}
+        except attest.TransientError as e:
+            return "retrying", {"reason": str(e)}
+        except Exception as e:  # unexpected: retry a few times, then give up; never crash the worker
+            log.warning("attestation check %s/%s failed: %s", job_id, seq, e)
+            return "retrying", {"reason": type(e).__name__}
 
     def get_report(self, caller: str, job_id: int, seq: int) -> dict:
         j, d = self._job_and_draft(job_id)

@@ -24,7 +24,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 COPY kavren_core/ kavren_core/
 COPY api/ api/
-RUN pip install ./kavren_core ./api
+COPY agents/ agents/
+# agents without its own deps: the evaluator only re-runs its deterministic cleaning code (attest.py)
+RUN pip install ./kavren_core ./api && pip install --no-deps ./agents
 COPY --from=web /src/web/out /app/web
 # Everything that must survive restarts lives on the persistent disk at /var/data
 ENV WEB_DIR=/app/web \

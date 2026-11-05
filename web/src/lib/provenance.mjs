@@ -9,11 +9,14 @@ export function describeProvenance(p) {
     const host = s.service || null;
     const service = host ? (SERVICES[host] ? `${SERVICES[host]} (${host})` : host) : "an unnamed service";
     const verified = s.verification === "attestation_verified";
-    return {
-      seq: s.seq,
-      text: `${s.model} on ${service}`,
-      label: verified ? "Verified by NEAR AI attestation" : "Reported by the provider, not independently verified",
-      verified,
-    };
+    let label = "Reported by the provider, not independently verified";
+    if (verified) {
+      const gpu = s.attestation?.gpu_evidence === "verified" ? " and NVIDIA GPU evidence" : "";
+      label = `Verified by the evaluator: NEAR AI's signature over this exact planning call, from a model key ` +
+        `attested by Intel TDX${gpu}; re-running its plan reproduces this file. The TEE's software build is not pinned.`;
+    } else if (s.attestation_note) {
+      label += ` (the provider's evidence did not verify: ${s.attestation_note})`;
+    }
+    return { seq: s.seq, text: `${s.model} on ${service}`, label, verified };
   });
 }

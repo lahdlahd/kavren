@@ -73,6 +73,18 @@ submission_provenance = Table(
     Column("recorded_at", BigInteger, nullable=False),
 )
 
+# The evaluator's independent check of the provider's attestation evidence (see attest.py).
+# status: verified | not_verified | retrying ; detail_json holds the public summary or the reason code.
+provenance_checks = Table(
+    "provenance_checks", metadata,
+    Column("job_id", BigInteger, primary_key=True),
+    Column("seq", Integer, primary_key=True),
+    Column("status", String(16), nullable=False),
+    Column("detail_json", Text, nullable=False),
+    Column("tries", Integer, nullable=False, default=0),
+    Column("checked_at", BigInteger, nullable=False),
+)
+
 
 def make_engine(url: str):
     if url.startswith("sqlite:///"):

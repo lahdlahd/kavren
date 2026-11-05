@@ -335,3 +335,155 @@ def test_near_ai_planner_records_completion_id_and_served_model():
     pl.plan(get_template("contacts-v1").build_spec(), "record_id,full_name,email,signup_date\nab,A,a@b.co,\n")
     assert (pl.last_completion_id, pl.last_served_model) == ("chatcmpl-xyz", "deepseek-ai/DeepSeek-V4.1-Flash-1017")
     assert pl.base_url == "https://cloud-api.near.ai/v1"
+
+
+# ---------------------------------------------------------------- NEAR AI attestation evidence
+import base64 as _b64  # noqa: E402
+
+
+def _evidence(plan: dict, *, model=Reporting.model, stream=False, kind="provider_tee") -> dict:
+    req = json.dumps({"model": model, "messages": [], **({"stream": True} if stream else {})}).encode()
+    resp = json.dumps({"choices": [{"message": {"content": json.dumps(plan)}}]}).encode()
+    return {"request_b64": _b64.b64encode(req).decode(), "response_b64": _b64.b64encode(resp).decode(),
+            "signature": {"kind": kind, "signed_text": "t", "signature": "s", "signing_algo": "ed25519",
+                          "signing_address": "ab" * 32}}
+
+
+class Attested(Reporting):
+    """Like NearAIPlanner(attested=True): each call leaves evidence for the plan it returned."""
+
+    def __init__(self, evidence_for=None, **kw):
+        super().__init__(**kw)
+        self.evidence_for = evidence_for or (lambda plan: _evidence(plan))
+
+    def plan(self, spec, work_csv, feedback=None):
+        plan, usage = super().plan(spec, work_csv, feedback)
+        self.last_evidence = self.evidence_for(plan)
+        return plan, usage
+
+
+async def _attested_ok(model, req, resp, sig):
+    return {"tcb_status": "UpToDate", "gpu_evidence": "verified", "deployment_provenance": "not_checked",
+            "signing_address": sig["signing_address"]}
+
+
+def _run(w, planner, check=_attested_ok):
+    jid = hire(w)
+    w["svc"].attestation_check = check
+    assert provider(w, planner).tick()[0]["uploaded"] is True
+    w["svc"].process_pending()
+    assert w["contract"].jobs[jid]["status"] == "Passed"  # attestation never changes the verdict
+    w["svc"].verify_attestations()
+    w["jid"] = jid
+    return w["svc"].get_provenance(jid)["submissions"][0]
+
+
+def test_evaluator_verifies_attested_evidence_that_reproduces_the_file(world):
+    p = _run(world, Attested())
+    assert p["verification"] == "attestation_verified"
+    assert p["attestation"]["gpu_evidence"] == "verified" and p["attestation"]["tcb_status"] == "UpToDate"
+    assert p["attestation"]["deployment_provenance"] == "not_checked"  # stated honestly on the page
+
+
+def test_genuine_evidence_from_a_different_plan_is_not_accepted(world):
+    lazy = {"rejects": [], "merges": []}  # a real signed call, but not the one that produced this file
+    p = _run(world, Attested(evidence_for=lambda plan: _evidence(lazy)))
+    assert p["verification"] == "reported_by_provider"
+    assert p["attestation_note"] == "evidence.plan_does_not_reproduce_file"
+
+
+def test_bad_signature_or_attestation_keeps_the_reported_label(world):
+    from kavren_api.attest import EvidenceError
+
+    async def bad(*a):
+        raise EvidenceError("signature.invalid")
+    p = _run(world, Attested(), check=bad)
+    assert p["verification"] == "reported_by_provider" and p["attestation_note"] == "signature.invalid"
+
+
+def test_streamed_or_other_model_evidence_is_refused(world):
+    p = _run(world, Attested(evidence_for=lambda plan: _evidence(plan, stream=True)))
+    assert p["attestation_note"] == "evidence.streamed_call"
+
+
+def test_near_ai_unreachable_is_retried_then_given_up(world):
+    from kavren_api.attest import TransientError
+    calls = []
+
+    async def down(*a):
+        calls.append(1)
+        raise TransientError("api.transport_failed")
+    w = world
+    p = _run(w, Attested(), check=down)
+    assert "attestation_note" not in p and p["verification"] == "reported_by_provider"  # still retrying
+    for _ in range(10):
+        w["svc"].verify_attestations()
+    assert len(calls) == w["svc"].MAX_ATTESTATION_TRIES
+    p = w["svc"].get_provenance(w["jid"])["submissions"][0]
+    assert p["verification"] == "reported_by_provider" and p["attestation_note"].startswith("gave_up_after_retries")
+
+
+def test_without_an_evaluator_key_nothing_is_checked(world):
+    w = world
+    jid = hire(w)
+    assert provider(w, Attested()).tick()[0]["uploaded"] is True
+    assert w["svc"].verify_attestations() == []  # no key configured, no fake injected
+    assert w["svc"].get_provenance(jid)["submissions"][0]["verification"] == "reported_by_provider"
+
+
+def test_evidence_survives_a_delayed_upload(world):
+    from test_buyer import LaggingChain
+    w = world
+    jid = hire(w)
+    lagging = LaggingChain(w["contract"])
+    w["svc"].chain = lagging
+    p = provider(w, Attested())
+    real_call = p.chain.call
+
+    def call_then_lag(method, args):
+        if method == "submit_work":
+            lagging.lag(100)
+        return real_call(method, args)
+    p.chain.call = call_then_lag
+    assert p.tick()[0]["uploaded"] is False
+    lagging.n = 0
+    assert provider(w, Scripted()).tick()[0]["action"] == "uploaded_pending"
+    w["svc"].attestation_check = _attested_ok
+    w["svc"].process_pending()
+    w["svc"].verify_attestations()
+    assert w["svc"].get_provenance(jid)["submissions"][0]["verification"] == "attestation_verified"
+
+
+def test_parse_evidence_accepts_only_model_tee_signatures():
+    from kavren_api.attest import parse_evidence
+    good = _evidence({"rejects": [], "merges": []})
+    assert parse_evidence(json.dumps(good).encode()) is not None
+    assert parse_evidence(json.dumps(_evidence({}, kind="gateway")).encode()) is None
+    assert parse_evidence(b"not json") is None and parse_evidence(b"") is None
+    assert parse_evidence(json.dumps({**good, "request_b64": "%%%"}).encode()) is None
+
+
+def test_attested_planner_keeps_evidence_and_falls_back_to_streaming():
+    from kavren_core.templates import get_template
+    spec, work = get_template("contacts-v1").build_spec(), "record_id,full_name,email,signup_date\nab,A,a@b.co,\n"
+    sent = []
+
+    async def ok(body):
+        sent.append(body)
+        return {"content": '{"rejects":[],"merges":[]}', "usage": {"total_tokens": 5}, "id": "chatcmpl-1",
+                "model": body["model"], "evidence": {"x": 1}}
+    pl = NearAIPlanner("k", attested=True, attested_call=ok,
+                       http=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)), base_url="https://x"))
+    assert pl.plan(spec, work)[0] == {"rejects": [], "merges": []}
+    assert "stream" not in sent[0] and pl.last_evidence == {"x": 1} and pl.last_completion_id == "chatcmpl-1"
+
+    async def down(body):
+        raise OSError("unreachable")
+
+    def streamed(req):
+        return httpx.Response(200, text=_sse({"id": "s-1", "choices": [{"delta": {"content": '{"rejects":[],"merges":[]}'}}]}),
+                              headers={"content-type": "text/event-stream"})
+    pl = NearAIPlanner("k", attested=True, attested_call=down,
+                       http=httpx.Client(transport=httpx.MockTransport(streamed), base_url="https://x"))
+    assert pl.plan(spec, work)[0] == {"rejects": [], "merges": []}
+    assert pl.last_evidence is None and pl.last_completion_id == "s-1"  # answered, but unverifiable

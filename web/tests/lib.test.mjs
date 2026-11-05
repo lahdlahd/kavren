@@ -114,3 +114,16 @@ test("provenance is labelled as the provider's claim unless verified", async () 
 test("a passed job is described as released, not paid", () => {
   assert.equal(sealFor({ ...JOB, status: "Passed" }, 0).line, "Accepted · released to provider");
 });
+
+test("verified provenance names what was checked, and what wasn't", async () => {
+  const { describeProvenance } = await import("../src/lib/provenance.mjs");
+  const [v] = describeProvenance({ submissions: [{ seq: 1, model: "m", service: "cloud-api.near.ai",
+    verification: "attestation_verified", attestation: { gpu_evidence: "verified", tcb_status: "UpToDate" } }] });
+  assert.equal(v.verified, true);
+  assert.match(v.label, /Intel TDX and NVIDIA GPU/);
+  assert.match(v.label, /software build is not pinned/);
+  const [f] = describeProvenance({ submissions: [{ seq: 1, model: "m", service: null,
+    verification: "reported_by_provider", attestation_note: "evidence.streamed_call" }] });
+  assert.equal(f.verified, false);
+  assert.match(f.label, /did not verify: evidence.streamed_call/);
+});

@@ -48,6 +48,7 @@ class ProviderAgent:
         self.account_id, self.chain, self.api, self.planner, self.clock = account_id, chain, api, planner, clock
         self.usage: list[dict] = []
         self._plan_ids: list[str] = []
+        self._evidence: dict | None = None
         self.log_dir = log_dir
         self.waiting: dict[int, int] = {}  # job_id -> seq we are waiting on
         self.gave_up: set[tuple[int, int]] = set()
@@ -103,11 +104,11 @@ class ProviderAgent:
         h = sha256_hex(sub)
         pending = self._pending_path(jid, h)
         pending.write_bytes(sub)
-        prov = self._provenance()
-        pending.with_suffix(".json").write_text(json.dumps(prov))
+        prov, evidence = self._provenance(), self._evidence
+        pending.with_suffix(".json").write_text(json.dumps({"provenance": prov, "evidence": evidence}))
         res = self.chain.call("submit_work", {"job_id": jid, "output_hash": h})
         self.waiting[jid] = res["value"]
-        up = self._upload(jid, sub, after_write=True, provenance=prov)
+        up = self._upload(jid, sub, after_write=True, provenance=prov, evidence=evidence)
         return {"job_id": jid, "action": "submitted", "seq": res["value"], "output_hash": h, "tx": res["tx"],
                 "uploaded": up, "local_revisions": len(local) - 1}
 
@@ -122,10 +123,13 @@ class ProviderAgent:
                 "service": getattr(self.planner, "base_url", None),
                 "completion_ids": list(self._plan_ids)}
 
-    def _upload(self, jid: int, sub: bytes, after_write: bool = False, provenance: dict | None = None) -> bool:
+    def _upload(self, jid: int, sub: bytes, after_write: bool = False, provenance: dict | None = None,
+                evidence: dict | None = None) -> bool:
         kw = {"files": {"file": ("submission.csv", sub, "text/csv")}}
         if provenance and provenance.get("model"):
             kw["data"] = {"provenance": json.dumps(provenance)}
+            if evidence:
+                kw["files"]["evidence"] = ("evidence.json", json.dumps(evidence).encode(), "application/json")
         url = f"/jobs/{jid}/submissions"
         r = self.api.request_after_write("POST", url, **kw) if after_write else self.api.request("POST", url, **kw)
         if r.status_code == 200:
@@ -141,14 +145,17 @@ class ProviderAgent:
         if not p.exists():
             return None
         meta = p.with_suffix(".json")
-        prov = json.loads(meta.read_text()) if meta.exists() else None
-        if self._upload(j["job_id"], p.read_bytes(), provenance=prov):
+        saved = json.loads(meta.read_text()) if meta.exists() else {}
+        if "provenance" not in saved:  # written by an earlier version: the record itself
+            saved = {"provenance": saved or None}
+        if self._upload(j["job_id"], p.read_bytes(), provenance=saved["provenance"], evidence=saved.get("evidence")):
             return {"job_id": j["job_id"], "action": "uploaded_pending", "output_hash": j["current_output_hash"]}
         return None
 
     def _plan_until_clean(self, spec, work: bytes, feedback):
         attempts = []
         self._plan_ids: list[str] = []
+        self._evidence = None
         for _ in range(LOCAL_REVISIONS + 1):
             try:
                 if self.on_progress is not None:
@@ -159,6 +166,7 @@ class ProviderAgent:
                 cid = getattr(self.planner, "last_completion_id", None)
                 if cid:
                     self._plan_ids.append(cid)
+                self._evidence = getattr(self.planner, "last_evidence", None)  # of the plan that made `sub`
                 sub = execute(spec, work, plan)
             except (PlanError, ValueError, KeyError, TimeoutError) as e:
                 feedback = [{"check": "PLAN", "code": "INVALID_PLAN", "record_id": None, "detail": str(e)[:300]}]
@@ -220,9 +228,10 @@ def main() -> None:
     chain = AgentChain(env.get("NEAR_RPC_URL", ""), env["KAVREN_CONTRACT_ID"], acct, key)
     api = ApiClient(env.get("KAVREN_API_URL", "https://kavren.onrender.com"), acct, key)
     planner = NearAIPlanner(env["NEAR_AI_API_KEY"], env.get("NEAR_AI_BASE_URL", "https://cloud-api.near.ai/v1"),
-                            env.get("NEAR_AI_MODEL") or DEFAULT_MODEL)
+                            env.get("NEAR_AI_MODEL") or DEFAULT_MODEL,
+                            attested=env.get("NEAR_AI_ATTESTED", "1") != "0")  # NEAR_AI_ATTESTED=0: streaming only
     agent = ProviderAgent(acct, chain, api, planner)
-    log.info("provider agent %s using model %s", acct, planner.model)
+    log.info("provider agent %s using model %s (attested calls: %s)", acct, planner.model, planner.attested)
     while True:
         try:
             events = agent.tick()
