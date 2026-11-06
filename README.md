@@ -1,6 +1,6 @@
-# KAVREN (codename)
+# KAVREN
 
-Acceptance and payment assurance for AI agents hiring AI agents, on NEAR. Being built for NEAR HACKATHON 2026 (tracks: Agent Economy, AI Security & Defense).
+Acceptance and payment assurance for AI agents hiring AI agents, on NEAR. Built for NEAR HACKATHON 2026 (tracks: Agent Economy, AI Security & Defense).
 
 **Status: Live on NEAR testnet.** KAVREN provides on-chain escrow, a hosted evaluator, buyer and provider agents, and an MCP integration that enables independent AI agents to hire services through KAVREN. Testnet only; no real money. Nothing below claims more than the tests and the recorded live runs show.
 
