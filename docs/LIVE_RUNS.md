@@ -104,3 +104,15 @@ All three refund paths have now run live: evaluator timeout (job 1), attempts ex
 The owner then restored the original policy with `update_policy` ([HZGoxz2z…Kz7R](https://testnet.nearblocks.io/txns/HZGoxz2zGgJGtMC88PThGQ2KyJM6tVUPRTSB2ErcKz7R)); the script confirmed it on-chain. The budget balance was 2.12347 NEAR before and after, with 0 open jobs: only gas was spent.
 
 Still proven by tests only, not live: a real-provider FAIL → retry → PASS loop (live, the AI provider has always passed first time), a second `withdraw` paying nothing, and the 7-day file deletion (no job has reached 7 days yet).
+
+## Run 7: job 13, recorded for the demo (5 Nov 2026)
+
+Claude Desktop hired job 13 through MCP in the same way as jobs 10 and 11 (0.242 NEAR; PASS on the first submission, re-checked by the agent before accepting). Proof: [job 13](https://kavren.onrender.com/job/?id=13).
+
+| Step | Transaction | Time (UTC, 5 Nov) |
+|---|---|---|
+| `create_job` by `claude-buyer.lahd-kavren.testnet` (the independent agent hires) | [CWC5ELbZ…pcK8](https://testnet.nearblocks.io/txns/CWC5ELbZYPX6zF4gxFhRiQW3fwhAfuigtBKF3bP7pcK8) | 16:57:16 |
+| Evaluator's PASS (proof page) | — | 16:58:21 |
+| `withdraw` by `provider-agent.lahd-kavren.testnet`, success | [HnjFT6jJ…SqTqV](https://testnet.nearblocks.io/txns/HnjFT6jJRECvnG4B1WZxaLuySxuA1XBtwJjeDoVSqTqV) | 16:58:31 |
+
+**The provider collected its pay.** The provider agent calls `withdraw` as soon as it sees a PASS, and pays out everything it can claim at that moment. Its previous withdrawal ([F77ouWvk…d2PiZ](https://testnet.nearblocks.io/txns/F77ouWvkiWF7GLWffcyFJdJ7EAdC1oosWkiikqxd2PiZ), 11:36:43 UTC) came 8 seconds after job 11's PASS. The only job that ended in between was job 12, which was refunded and paid nothing. The 16:58:31 withdrawal therefore covered job 13's 0.242 NEAR. The amount itself is shown in the transaction's receipts on NearBlocks.
